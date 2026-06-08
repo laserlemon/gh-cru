@@ -92,9 +92,12 @@ func dim(s string, enabled bool) string {
 
 // Human writes a TTY-friendly summary for one PR. The caller passes the
 // gh term so we can detect TTY/color/width consistently with gh itself.
+// showHeading toggles a dim `repo#N` heading at the top — used in batch
+// mode (gh cru pr1 pr2 pr3) so users can tell adjacent blocks apart.
 //
-// Layout (no PR heading; that lived above this block previously):
+// Layout (heading shown only when showHeading is true):
 //
+//	repo#N                       (dim; batch mode only)
 //	LOC          <n>
 //	Size label   <bucket>
 //	Size factor  <f>
@@ -114,12 +117,19 @@ func dim(s string, enabled bool) string {
 // PR title/state/author/diffstat and the PR heading itself are omitted:
 // callers running batches typically already know what PR they asked for,
 // and `gh pr view` covers the metadata.
-func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
+func Human(w io.Writer, repo string, s score.PRScore, t term.Term, showHeading bool) {
 	isTTY := t.IsTerminalOutput()
 	color := t.IsColorEnabled()
 	width, _, _ := t.Size()
 	if width <= 0 {
 		width = 80
+	}
+
+	// Batch-mode heading: dim `owner/repo#N` so adjacent PR blocks have a
+	// visual anchor. Suppressed in single-PR mode where there's nothing
+	// to disambiguate.
+	if showHeading {
+		fmt.Fprintf(w, "%s\n", dim(fmt.Sprintf("%s#%d", repo, s.PR.Number), color))
 	}
 
 	// Header block: %-12s pads labels to 12 chars (`Size factor` at 11 +

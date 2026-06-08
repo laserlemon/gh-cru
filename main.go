@@ -96,14 +96,20 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	exitErr := 0
-	for _, arg := range args {
+	multi := len(args) > 1
+	for i, arg := range args {
 		ref, err := prref.Parse(arg, defOwner, defRepo)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "skip:", err)
 			exitErr = 1
 			continue
 		}
-		if err := scoreOne(client, ref, myLogin, myIdentities, teamsOK); err != nil {
+		if multi && i > 0 {
+			// Blank line between PRs in batch mode so the dim heading
+			// has breathing room above it.
+			fmt.Println()
+		}
+		if err := scoreOne(client, ref, myLogin, myIdentities, teamsOK, multi); err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", ref, err)
 			exitErr = 1
 			continue
@@ -115,7 +121,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []string, teamsOK bool) error {
+func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []string, teamsOK, showHeading bool) error {
 	pr, err := client.FetchPR(ref)
 	if err != nil {
 		return err
@@ -142,7 +148,7 @@ func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []
 	}
 	// One code path for human and script modes: tableprinter degrades to
 	// tab-separated automatically when stdout isn't a TTY.
-	format.Human(os.Stdout, repoStr, s, term.FromEnv())
+	format.Human(os.Stdout, repoStr, s, term.FromEnv(), showHeading)
 	return nil
 }
 
