@@ -51,20 +51,22 @@ import (
 // asking.
 func Human(w io.Writer, repo string, s score.PRScore) {
 	fmt.Fprintf(w, "%s#%d\n", repo, s.PR.Number)
-	fmt.Fprintf(w, "  LOC:            %d\n", s.LOC)
-	fmt.Fprintf(w, "  Size label:     %s\n", s.Bucket)
-	fmt.Fprintf(w, "  Size factor:    %.3f\n", s.SizeFactor)
-	fmt.Fprintf(w, "  Risk label:     %s\n", riskLabel(s.Risk))
-	fmt.Fprintf(w, "  Risk factor:    %.3f\n", s.Risk)
-	fmt.Fprintf(w, "  Normal CRU:     %.3f\n", s.CRU())
+	// Header block: %-14s pads labels to 14 chars, which is `Size factor:`
+	// (longest at 12) + 2 spaces. Shorter labels get more padding to align.
+	fmt.Fprintf(w, "  %-14s%d\n", "LOC:", s.LOC)
+	fmt.Fprintf(w, "  %-14s%s\n", "Size label:", s.Bucket)
+	fmt.Fprintf(w, "  %-14s%.3f\n", "Size factor:", s.SizeFactor)
+	fmt.Fprintf(w, "  %-14s%s\n", "Risk label:", riskLabel(s.Risk))
+	fmt.Fprintf(w, "  %-14s%.3f\n", "Risk factor:", s.Risk)
+	fmt.Fprintf(w, "  %-14s%.3f\n", "Normal CRU:", s.CRU())
 
 	if !s.HasCodeowners {
-		fmt.Fprintf(w, "  Total CRU:      %.3f\n", s.CRU())
-		fmt.Fprintln(w, "  Owners:         no CODEOWNERS file in repo")
+		fmt.Fprintf(w, "  %-14s%.3f\n", "Total CRU:", s.CRU())
+		fmt.Fprintf(w, "  %-14s%s\n", "Owners:", "no CODEOWNERS file in repo")
 		return
 	}
 
-	fmt.Fprintf(w, "  Total CRU:      %.3f\n", s.AuthorCRU())
+	fmt.Fprintf(w, "  %-14s%.3f\n", "Total CRU:", s.AuthorCRU())
 	fmt.Fprintln(w, "  Owners:")
 
 	mySet := makeIdentitySet(s.MyIdentities)
@@ -91,13 +93,14 @@ func Human(w io.Writer, repo string, s score.PRScore) {
 }
 
 // writeOwnerBlock writes one owner's four-line block with the leading
-// mark (`* ` or `  `) on the heading line. Values are rounded only for
-// display; callers pass the full-precision floats.
+// mark (`* ` or `  `) on the heading line. Labels are padded to a 19-char
+// column (longest is `Ownership factor:` at 17 + 2-space min gap). Values
+// are rounded only for display; callers pass the full-precision floats.
 func writeOwnerBlock(w io.Writer, mark, label string, ownedLOC int, share, requestedCRU float64) {
 	fmt.Fprintf(w, "  %s%s\n", mark, label)
-	fmt.Fprintf(w, "      Owned LOC:         %d\n", ownedLOC)
-	fmt.Fprintf(w, "      Ownership factor:  %.3f\n", share)
-	fmt.Fprintf(w, "      Requested CRU:     %.3f\n", requestedCRU)
+	fmt.Fprintf(w, "      %-19s%d\n", "Owned LOC:", ownedLOC)
+	fmt.Fprintf(w, "      %-19s%.3f\n", "Ownership factor:", share)
+	fmt.Fprintf(w, "      %-19s%.3f\n", "Requested CRU:", requestedCRU)
 }
 
 func writeUnownedBlock(w io.Writer, unownedLOC, totalLOC int) {
@@ -106,9 +109,9 @@ func writeUnownedBlock(w io.Writer, unownedLOC, totalLOC int) {
 		share = float64(unownedLOC) / float64(totalLOC)
 	}
 	fmt.Fprintf(w, "    (unowned)\n")
-	fmt.Fprintf(w, "      Owned LOC:         %d\n", unownedLOC)
-	fmt.Fprintf(w, "      Ownership factor:  %.3f\n", share)
-	fmt.Fprintf(w, "      Requested CRU:     (not attributed)\n")
+	fmt.Fprintf(w, "      %-19s%d\n", "Owned LOC:", unownedLOC)
+	fmt.Fprintf(w, "      %-19s%.3f\n", "Ownership factor:", share)
+	fmt.Fprintf(w, "      %-19s%s\n", "Requested CRU:", "(not attributed)")
 }
 
 func makeIdentitySet(ids []string) map[string]bool {
