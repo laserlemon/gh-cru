@@ -191,6 +191,16 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term, showHeading b
 	if s.MyLogin != "" {
 		fmt.Fprintf(w, "%s %.3f\n", label("Your CRU", color), s.MyCRU)
 	}
+
+	// CODEOWNERS exists but none of the PR's files are covered. Skip the
+	// table (it would render with just an `(unowned)` row, which adds
+	// nothing) and show a one-line footnote instead.
+	if len(s.SortedOwners()) == 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "%s\n", dim("No CODEOWNERS coverage for these files.", color))
+		return
+	}
+
 	fmt.Fprintln(w)
 	writeOwnerTable(w, s, isTTY, color, width)
 }
