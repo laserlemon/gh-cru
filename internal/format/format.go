@@ -125,12 +125,11 @@ func dim(s string, enabled bool) string {
 
 // Human writes a TTY-friendly summary for one PR. The caller passes the
 // gh term so we can detect TTY/color/width consistently with gh itself.
-// showHeading toggles a dim `repo#N` heading at the top — used in batch
-// mode (gh cru pr1 pr2 pr3) so users can tell adjacent blocks apart.
 //
-// Layout (heading shown only when showHeading is true):
+// Layout:
 //
-//	repo#N                       (dim; batch mode only)
+//	owner/repo#N                 (always-on, color hashed by repo)
+//
 //	LOC          <n>
 //	Size label   <bucket>
 //	Size factor  <f>
@@ -147,10 +146,10 @@ func dim(s string, enabled bool) string {
 //	Calculating your personal CRU requires read:org authorization to
 //	read your team memberships.   (only when teams couldn't be enumerated)
 //
-// PR title/state/author/diffstat and the PR heading itself are omitted:
-// callers running batches typically already know what PR they asked for,
-// and `gh pr view` covers the metadata.
-func Human(w io.Writer, repo string, s score.PRScore, t term.Term, showHeading bool) {
+// PR title/state/author/diffstat are omitted: callers running batches
+// typically already know what PR they asked for, and `gh pr view`
+// covers the metadata.
+func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	isTTY := t.IsTerminalOutput()
 	color := t.IsColorEnabled()
 	width, _, _ := t.Size()
@@ -158,12 +157,9 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term, showHeading b
 		width = 80
 	}
 
-	// Batch-mode heading: dim `owner/repo#N` so adjacent PR blocks have a
-	// visual anchor. Suppressed in single-PR mode where there's nothing
-	// to disambiguate.
-	if showHeading {
-		fmt.Fprintf(w, "%s\n\n", headingColor(repo, color)(fmt.Sprintf("%s#%d", repo, s.PR.Number)))
-	}
+	// Always-on `owner/repo#N` heading. Per-repo color (FNV hash) groups
+	// batches from one repo and separates batches from different repos.
+	fmt.Fprintf(w, "%s\n\n", headingColor(repo, color)(fmt.Sprintf("%s#%d", repo, s.PR.Number)))
 
 	// Header block: %-12s pads labels to 12 chars (`Size factor` at 11 +
 	// 1-space gap), matching the visual alignment in the user's mockup.

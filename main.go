@@ -96,7 +96,6 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	exitErr := 0
-	multi := len(args) > 1
 	for i, arg := range args {
 		ref, err := prref.Parse(arg, defOwner, defRepo)
 		if err != nil {
@@ -104,12 +103,12 @@ func runRoot(cmd *cobra.Command, args []string) error {
 			exitErr = 1
 			continue
 		}
-		if multi && i > 0 {
-			// Blank line between PRs in batch mode so the dim heading
-			// has breathing room above it.
+		if i > 0 {
+			// Blank line between PRs so the heading has breathing room
+			// above it. Heading itself owns the breathing room below.
 			fmt.Println()
 		}
-		if err := scoreOne(client, ref, myLogin, myIdentities, teamsOK, multi); err != nil {
+		if err := scoreOne(client, ref, myLogin, myIdentities, teamsOK); err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", ref, err)
 			exitErr = 1
 			continue
@@ -121,7 +120,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []string, teamsOK, showHeading bool) error {
+func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []string, teamsOK bool) error {
 	pr, err := client.FetchPR(ref)
 	if err != nil {
 		return err
@@ -148,7 +147,7 @@ func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []
 	}
 	// One code path for human and script modes: tableprinter degrades to
 	// tab-separated automatically when stdout isn't a TTY.
-	format.Human(os.Stdout, repoStr, s, term.FromEnv(), showHeading)
+	format.Human(os.Stdout, repoStr, s, term.FromEnv())
 	return nil
 }
 
