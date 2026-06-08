@@ -178,6 +178,20 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 	if err := tp.Render(); err != nil {
 		fmt.Fprintf(w, "  (table render error: %v)\n", err)
 	}
+
+	// Footnote: render only when the team enumeration was incomplete AND
+	// the user didn't surface in the table (no direct @login match).
+	// This is the Codespaces case: a default GITHUB_TOKEN can't read
+	// team membership, so a PR owned by a team the user is in shows up
+	// with no user row. We tell them once, quietly, in the right place.
+	if !s.TeamsResolved && s.MyLogin != "" && s.MyOwnedLOC == 0 {
+		note := fmt.Sprintf("(team memberships for @%s unavailable; needs read:org)", s.MyLogin)
+		if color {
+			fmt.Fprintf(w, "  %s\n", colorDim(note))
+		} else {
+			fmt.Fprintf(w, "  %s\n", note)
+		}
+	}
 }
 
 // addOwnerRow appends one owner row. The `* ` / `  ` marker is part of

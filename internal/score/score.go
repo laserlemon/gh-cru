@@ -44,6 +44,14 @@ type PRScore struct {
 	// when they have any ownership in the PR (direct or via team).
 	MyLogin string
 
+	// TeamsResolved is true when the caller successfully enumerated the
+	// authenticated user's team memberships. False means we fell back to
+	// matching only the @login; team-based ownership won't be detected
+	// (the Codespaces GITHUB_TOKEN, fine-grained PATs without read:org,
+	// etc). The Human formatter uses this to render a dim footnote so
+	// the user knows their own row may be missing.
+	TeamsResolved bool
+
 	// MyIdentities are the CODEOWNERS-compatible identities used to compute
 	// MyCRU. Empty when no personal scoring was requested (e.g. --skip-ownership).
 	MyIdentities []string

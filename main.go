@@ -83,24 +83,15 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 	var myLogin string
 	var myIdentities []string
+	teamsOK := true
 	if !noPersonalFlag && !noOwnersFlag {
-		login, ids, teamsOK, err := client.AuthIdentities()
+		login, ids, ok, err := client.AuthIdentities()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warn: could not resolve your identities: %v (continuing without YOUR CRU)\n", err)
 		} else {
 			myLogin = login
 			myIdentities = ids
-			if !teamsOK {
-				// The default Codespaces GITHUB_TOKEN is the common case
-				// here. Tell the user their team-based ownership won't be
-				// counted so they don't trust the score blindly.
-				fmt.Fprintf(os.Stderr,
-					"warn: your token can't read team memberships (needs read:org scope); "+
-						"only direct CODEOWNERS matches on @%s will be detected. "+
-						"If you're in a Codespace, the default GITHUB_TOKEN doesn't have read:org. "+
-						"Export a personal token (with read:org) or run outside Codespaces for full team coverage.\n",
-					login)
-			}
+			teamsOK = ok
 		}
 	}
 
@@ -112,7 +103,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 			exitErr = 1
 			continue
 		}
-		if err := scoreOne(client, ref, myLogin, myIdentities); err != nil {
+		if err := scoreOne(client, ref, myLogin, myIdentities, teamsOK); err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", ref, err)
 			exitErr = 1
 			continue
@@ -124,7 +115,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []string) error {
+func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []string, teamsOK bool) error {
 	pr, err := client.FetchPR(ref)
 	if err != nil {
 		return err
@@ -144,6 +135,7 @@ func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []
 	}
 
 	s := score.Compute(pr, files, owners, riskLabelFlag, myLogin, myIdentities)
+	s.TeamsResolved = teamsOK
 	repoStr := fmt.Sprintf("%s/%s", ref.Owner, ref.Repo)
 	if jsonFlag {
 		return format.JSON(os.Stdout, repoStr, s)
