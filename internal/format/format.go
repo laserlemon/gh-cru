@@ -77,6 +77,10 @@ var (
 	// dark and `black+hu` for light; we use `default+du` so it adapts to the
 	// terminal's foreground color without us having to detect theme.
 	colorTableHeader = ansi.ColorFunc("default+du")
+
+	// colorLabel is the metadata-label gray: same dim as table headers
+	// but without the underline (labels are inline, not column anchors).
+	colorLabel = ansi.ColorFunc("default+d")
 )
 
 // sizeColor maps the bucket label to its github/github-matched color
@@ -192,15 +196,16 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term, showHeading b
 	writeOwnerTable(w, s, isTTY, color, width)
 }
 
-// label pads a metadata label to 12 chars and applies the same gray
-// styling used for table headers. Padding happens before the ANSI escape
-// so visible-width math (used by terminals to align columns) is correct.
+// label pads a metadata label to 12 chars and applies the gray styling
+// (dim, NOT underlined: labels are inline, unlike table column headers).
+// Padding happens before the ANSI escape so visible-width math (used by
+// terminals to align columns) is correct.
 func label(s string, enabled bool) string {
 	padded := fmt.Sprintf("%-12s", s)
 	if !enabled {
 		return padded
 	}
-	return colorTableHeader(padded)
+	return colorLabel(padded)
 }
 
 // headingColor returns a colorizer for the multi-PR heading, picked by
