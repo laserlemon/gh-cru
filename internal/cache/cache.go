@@ -5,7 +5,7 @@
 //
 // Layout under base directory (defaults to os.UserCacheDir()/gh-cru):
 //
-//	codeowners/<owner>/<repo>/<etag>.codeowners.txt
+//	codeowners/<owner>/<repo>/<etag>.codeowners
 //
 // One file per body, keyed by HTTP ETag. No pointer file, no metadata —
 // the body file IS the cache entry. The resolver always issues a HEAD
@@ -74,7 +74,7 @@ func (c *Cache) repoDir(owner, repo string) string {
 }
 
 func (c *Cache) bodyPath(owner, repo, etag string) string {
-	return filepath.Join(c.repoDir(owner, repo), etagFileKey(etag)+".codeowners.txt")
+	return filepath.Join(c.repoDir(owner, repo), etagFileKey(etag)+".codeowners")
 }
 
 // etagFileKey derives a filesystem-safe filename component from a raw
