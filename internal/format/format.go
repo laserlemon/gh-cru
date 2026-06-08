@@ -21,8 +21,7 @@ import (
 //
 // Layout matches the locked output spec:
 //
-//	<title> <repo>#<number>
-//	<state> • by @author • +adds -dels in N file(s)
+//	<repo>#<number>
 //	  Size factor:  <f>
 //	  Risk factor:  <r>
 //	  Normal CRU:   <c>
@@ -32,14 +31,16 @@ import (
 //	    * @owner2   X LOC  Y%  →  Z CRU
 //	  Total CRU:    <sum>
 //
+// PR title/state/author/diffstat are intentionally omitted: the diff size
+// is already encoded in Size factor, and `gh pr view` covers the rest.
+// Use --json for the full metadata payload.
+//
 // Owners on the user's team-list (or matching their login) get a leading
 // `* ` marker in the git-branch style. Non-matching rows are prefixed
 // with two spaces so columns align.
 func Human(w io.Writer, repo string, s score.PRScore) {
-	pr := s.PR
-	fmt.Fprintf(w, "%s %s#%d\n", pr.Title, repo, pr.Number)
-	fmt.Fprintf(w, "%s • by @%s • +%d -%d in %d file(s)\n\n",
-		pr.State, pr.Author, pr.Additions, pr.Deletions, pr.Files)
+	fmt.Fprintf(w, "%s#%d\n", repo, s.PR.Number)
+	fmt.Fprintln(w)
 
 	fmt.Fprintf(w, "  Size factor:  %.2f   (%d LOC, %s)\n", s.SizeFactor, s.LOC, s.Bucket)
 	fmt.Fprintf(w, "  Risk factor:  %.1f   (%s)\n", s.Risk, riskTag(s.Risk))
@@ -48,6 +49,7 @@ func Human(w io.Writer, repo string, s score.PRScore) {
 	if !s.HasCodeowners {
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "  Ownership:    no CODEOWNERS file in repo\n")
+		fmt.Fprintln(w)
 		return
 	}
 
@@ -73,6 +75,7 @@ func Human(w io.Writer, repo string, s score.PRScore) {
 	}
 	fmt.Fprintf(w, "  Total CRU:    %.2f   (sum across owners; team review burden)\n",
 		s.AuthorCRU())
+	fmt.Fprintln(w)
 }
 
 func makeIdentitySet(ids []string) map[string]bool {
