@@ -262,30 +262,11 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 
 	// No dedicated user row above the table: "Your CRU" lives in the
 	// header block now. The table is purely the CODEOWNERS view, with
-	// `*` markers on teams the user belongs to.
+	// `*` markers on teams the user belongs to. Unowned changes are
+	// reflected in Total CRU via the score; no dedicated row.
 	for _, o := range s.SortedOwners() {
 		isTeamYou := mySet[strings.ToLower(o.Owner)]
 		addOwnerRow(tp, isTeamYou, displayOwner(o.Owner), o.OwnedLOC, o.Share, o.Score, false, isTeamYou, color)
-	}
-
-	if s.UnownedChanges > 0 {
-		ushare := 0.0
-		if s.LOC > 0 {
-			ushare = float64(s.UnownedChanges) / float64(s.LOC)
-		}
-		if color {
-			tp.AddField("(unowned)", tableprinter.WithColor(colorDim))
-		} else {
-			tp.AddField("(unowned)")
-		}
-		tp.AddField(fmt.Sprintf("%d", s.UnownedChanges), tableprinter.WithPadding(padLeft))
-		tp.AddField(fmt.Sprintf("%.3f", ushare), tableprinter.WithPadding(padLeft))
-		if color {
-			tp.AddField("-", tableprinter.WithColor(colorDim), tableprinter.WithPadding(padLeft))
-		} else {
-			tp.AddField("-", tableprinter.WithPadding(padLeft))
-		}
-		tp.EndRow()
 	}
 
 	if err := tp.Render(); err != nil {
