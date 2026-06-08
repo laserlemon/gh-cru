@@ -1,6 +1,8 @@
 // Package gh wraps the gh CLI's API clients with the shape gh-cru needs:
-// a single fetch entry point per PR, and a per-process CODEOWNERS cache so
-// batched runs (`gh cru 1 2 3 4 5`) only hit the CODEOWNERS API once per repo.
+// a single fetch entry point per PR, persistent on-disk CODEOWNERS caching
+// (so `gh pr list | xargs gh cru` reuses the 2.5MB github/github fetch
+// across subprocess boundaries), and a per-process in-memory cache for
+// batched runs.
 package gh
 
 import (
@@ -15,15 +17,17 @@ import (
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/hmarr/codeowners"
 
+	"github.com/laserlemon/gh-cru/internal/cache"
 	"github.com/laserlemon/gh-cru/internal/prref"
 )
 
 // Client is the gh-cru API client. Safe for concurrent use.
 type Client struct {
 	rest *api.RESTClient
+	disk *cache.Cache // nil if cache init failed (still functional, just no persistence)
 
 	mu       sync.Mutex
-	owners   map[string]codeowners.Ruleset // key: owner/repo@default_branch_sha (we use default branch ref)
+	owners   map[string]ownersEntry        // per-process cache (batch within one CLI run)
 	noOwners map[string]bool               // repos with no CODEOWNERS file at any standard path
 
 	authLogin    string
@@ -32,15 +36,28 @@ type Client struct {
 	authResolved bool
 }
 
-// NewClient builds a Client using gh's default auth.
+// ownersEntry is the in-memory record for a repo's CODEOWNERS in one run.
+// Source distinguishes local/cache-hit/cache-304/fresh so callers can show
+// it in dim footer text.
+type ownersEntry struct {
+	Rules  codeowners.Ruleset
+	Source string // "local" | "cache" | "cache-revalidated" | "fresh"
+}
+
+// NewClient builds a Client using gh's default auth and the standard
+// on-disk cache directory. The disk cache is best-effort: if it can't be
+// initialized (e.g. unset HOME), the client still works using only the
+// in-process cache.
 func NewClient() (*Client, error) {
 	rest, err := api.DefaultRESTClient()
 	if err != nil {
 		return nil, fmt.Errorf("gh REST client: %w", err)
 	}
+	disk, _ := cache.New("") // ignore err; nil cache is fine
 	return &Client{
 		rest:     rest,
-		owners:   make(map[string]codeowners.Ruleset),
+		disk:     disk,
+		owners:   make(map[string]ownersEntry),
 		noOwners: make(map[string]bool),
 	}, nil
 }
@@ -218,93 +235,202 @@ func (c *Client) FetchPRFiles(ref prref.Ref) ([]File, error) {
 	return files, nil
 }
 
-// FetchCodeowners returns the parsed CODEOWNERS ruleset for the repo, cached
-// for the lifetime of the Client.
+// FetchCodeowners returns the parsed CODEOWNERS ruleset for the repo.
+// Resolution priority:
+//
+//  1. Local working tree, if the target repo == the current git repo.
+//     Uncached — the file may include unmerged edits to ownership.
+//  2. In-process cache from earlier PR(s) this run.
+//  3. On-disk cache pointer, if fresh (< DefaultTTL).
+//  4. On-disk cache pointer w/ conditional GET (If-None-Match), if present.
+//  5. Cold fetch from the contents API.
 //
 // Returns (nil, false, nil) when the repo has no CODEOWNERS file in any
 // standard location. Returns (nil, false, err) for actual API failures.
-//
-// We key the cache on owner/repo (not a ref/sha) because gh-cru is a
-// short-lived CLI invocation; the few seconds of skew between scoring
-// adjacent PRs is not worth the extra round trips to pin per-PR SHAs.
 func (c *Client) FetchCodeowners(owner, repo string) (codeowners.Ruleset, bool, error) {
+	rs, _, ok, err := c.fetchCodeownersWithSource(owner, repo)
+	return rs, ok, err
+}
+
+// fetchCodeownersWithSource is the resolver. Returns ruleset, provenance
+// ("local"/"cache"/"fresh"), and the usual ok/err pair.
+//
+// Resolution priority:
+//
+//  1. In-process cache (this CLI run).
+//  2. Local working tree, if target repo == cwd repo (uncached: may
+//     contain unmerged edits to ownership).
+//  3. Per CODEOWNERS path (.github/CODEOWNERS, CODEOWNERS, docs/CODEOWNERS):
+//     HEAD to learn current ETag. If the disk cache already has a body
+//     for that ETag, use it (browser-style hit; handles rollbacks too).
+//     Otherwise GET the body and save it.
+//  4. All three HEADs 404 → repo has no CODEOWNERS, mark in-process so
+//     we don't re-probe within this run.
+func (c *Client) fetchCodeownersWithSource(owner, repo string) (codeowners.Ruleset, string, bool, error) {
 	key := owner + "/" + repo
+
+	// 1. In-process cache (covers batches and the local-file path).
 	c.mu.Lock()
-	if rs, ok := c.owners[key]; ok {
+	if entry, ok := c.owners[key]; ok {
 		c.mu.Unlock()
-		return rs, true, nil
+		return entry.Rules, entry.Source, true, nil
 	}
 	if c.noOwners[key] {
 		c.mu.Unlock()
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	c.mu.Unlock()
 
-	// Try the standard locations in priority order.
-	body, err := c.fetchCodeownersRaw(owner, repo)
+	// 2. Local working-tree file when target repo == cwd repo.
+	if local, err := TryLocalCodeowners(owner, repo); err == nil && local.Found {
+		rs, perr := codeowners.ParseFile(bytes.NewReader(local.Body))
+		if perr != nil {
+			return nil, "", false, fmt.Errorf("parse local %s: %w", local.Path, perr)
+		}
+		c.rememberOwners(key, rs, "local")
+		return rs, "local", true, nil
+	}
+
+	// 3. HEAD-then-(cache-or-GET) walk of the standard paths.
+	body, source, err := c.resolveRemote(owner, repo)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	if body == nil {
 		c.mu.Lock()
 		c.noOwners[key] = true
 		c.mu.Unlock()
-		return nil, false, nil
+		return nil, "", false, nil
 	}
-
 	rs, err := codeowners.ParseFile(bytes.NewReader(body))
 	if err != nil {
-		return nil, false, fmt.Errorf("parse CODEOWNERS for %s/%s: %w", owner, repo, err)
+		return nil, "", false, fmt.Errorf("parse CODEOWNERS for %s/%s: %w", owner, repo, err)
 	}
-	c.mu.Lock()
-	c.owners[key] = rs
-	c.mu.Unlock()
-	return rs, true, nil
+	c.rememberOwners(key, rs, source)
+	return rs, source, true, nil
 }
 
-func (c *Client) fetchCodeownersRaw(owner, repo string) ([]byte, error) {
-	paths := []string{".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"}
-	for _, p := range paths {
-		endpoint := fmt.Sprintf("repos/%s/%s/contents/%s", owner, repo, p)
-		resp, err := c.rest.Request(http.MethodGet, endpoint, nil)
+// rememberOwners populates the in-process cache. Convenience to keep the
+// lock dance out of the resolver.
+func (c *Client) rememberOwners(key string, rs codeowners.Ruleset, source string) {
+	c.mu.Lock()
+	c.owners[key] = ownersEntry{Rules: rs, Source: source}
+	c.mu.Unlock()
+}
+
+// resolveRemote walks the standard CODEOWNERS paths in priority order.
+// For each path, HEAD reveals the current ETag; if the cache already has
+// a body for that ETag, we use it. Otherwise GET + save. Returns nil body
+// (no error) when all three paths 404.
+func (c *Client) resolveRemote(owner, repo string) ([]byte, string, error) {
+	for _, path := range []string{".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"} {
+		etag, status, err := c.headCodeowners(owner, repo, path)
 		if err != nil {
-			if isNotFound(err) {
-				continue
-			}
-			return nil, fmt.Errorf("GET %s: %w", endpoint, err)
+			return nil, "", err
 		}
-		defer resp.Body.Close()
-		var meta struct {
-			Content     string `json:"content"`
-			Encoding    string `json:"encoding"`
-			DownloadURL string `json:"download_url"`
+		if status == http.StatusNotFound {
+			continue
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
-			return nil, fmt.Errorf("decode %s: %w", endpoint, err)
+		if status != http.StatusOK || etag == "" {
+			continue
 		}
-		switch meta.Encoding {
-		case "base64":
-			clean := strings.NewReplacer("\n", "", "\r", "", " ", "").Replace(meta.Content)
-			decoded, err := base64Decode(clean)
-			if err != nil {
-				return nil, fmt.Errorf("base64 decode %s: %w", endpoint, err)
+
+		// Browser-style cache hit: known ETag → known body.
+		if c.disk != nil && c.disk.HasBody(owner, repo, etag) {
+			body, rerr := c.disk.ReadBody(owner, repo, etag)
+			if rerr == nil {
+				return body, "cache", nil
 			}
-			return decoded, nil
-		case "none", "":
-			// File too large to inline. Fetch the raw download_url.
-			if meta.DownloadURL == "" {
-				return nil, fmt.Errorf("no download_url for large file %s", endpoint)
-			}
-			raw, err := c.fetchRawURL(meta.DownloadURL)
-			if err != nil {
-				return nil, fmt.Errorf("fetch raw %s: %w", meta.DownloadURL, err)
-			}
-			return raw, nil
-		default:
-			return nil, fmt.Errorf("unexpected encoding %q for %s", meta.Encoding, endpoint)
+			// Corrupt cache entry; fall through to a fresh GET.
 		}
+
+		// Unknown ETag: fetch + cache.
+		body, _, err := c.getCodeownersBody(owner, repo, path)
+		if err != nil {
+			return nil, "", err
+		}
+		if body == nil {
+			continue
+		}
+		if c.disk != nil {
+			_ = c.disk.SaveBody(owner, repo, etag, body)
+		}
+		return body, "fresh", nil
 	}
-	return nil, nil
+	return nil, "", nil
+}
+
+// getCodeownersBody fetches the body for one path. Returns (nil, "", nil)
+// if the path doesn't exist (404). Blob SHA is returned for callers that
+// want it, but the cache doesn't track it.
+func (c *Client) getCodeownersBody(owner, repo, path string) ([]byte, string, error) {
+	endpoint := fmt.Sprintf("repos/%s/%s/contents/%s", owner, repo, path)
+	resp, err := c.rest.Request(http.MethodGet, endpoint, nil)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, "", nil
+		}
+		return nil, "", fmt.Errorf("GET %s: %w", endpoint, err)
+	}
+	body, blobSHA, derr := decodeContentsResponse(resp, endpoint, c.fetchRawURL)
+	resp.Body.Close()
+	if derr != nil {
+		return nil, "", derr
+	}
+	return body, blobSHA, nil
+}
+
+// headCodeowners issues a HEAD against the contents API for one path.
+// Returns ETag + status. We use HEAD (not a conditional GET with
+// If-None-Match) because the gh REST client can't set custom headers.
+// HEAD is a no-body request against a stock GET endpoint and works
+// through the standard client.
+func (c *Client) headCodeowners(owner, repo, path string) (string, int, error) {
+	endpoint := fmt.Sprintf("repos/%s/%s/contents/%s", owner, repo, path)
+	resp, err := c.rest.Request(http.MethodHead, endpoint, nil)
+	if err != nil {
+		if isNotFound(err) {
+			return "", http.StatusNotFound, nil
+		}
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+	return resp.Header.Get("ETag"), resp.StatusCode, nil
+}
+
+// decodeContentsResponse parses a GitHub contents API JSON body and returns
+// the decoded file content + blob sha. Handles both inline base64 (under
+// 1MB) and the "encoding=none" case via download_url.
+func decodeContentsResponse(resp *http.Response, endpoint string, rawFetch func(string) ([]byte, error)) ([]byte, string, error) {
+	var meta struct {
+		SHA         string `json:"sha"`
+		Content     string `json:"content"`
+		Encoding    string `json:"encoding"`
+		DownloadURL string `json:"download_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return nil, "", fmt.Errorf("decode %s: %w", endpoint, err)
+	}
+	switch meta.Encoding {
+	case "base64":
+		clean := strings.NewReplacer("\n", "", "\r", "", " ", "").Replace(meta.Content)
+		decoded, err := base64Decode(clean)
+		if err != nil {
+			return nil, "", fmt.Errorf("base64 decode %s: %w", endpoint, err)
+		}
+		return decoded, meta.SHA, nil
+	case "none", "":
+		if meta.DownloadURL == "" {
+			return nil, "", fmt.Errorf("no download_url for large file %s", endpoint)
+		}
+		raw, err := rawFetch(meta.DownloadURL)
+		if err != nil {
+			return nil, "", fmt.Errorf("fetch raw %s: %w", meta.DownloadURL, err)
+		}
+		return raw, meta.SHA, nil
+	default:
+		return nil, "", fmt.Errorf("unexpected encoding %q for %s", meta.Encoding, endpoint)
+	}
 }
 
 // fetchRawURL downloads a file via its absolute https URL. Used for files
