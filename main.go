@@ -84,12 +84,23 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	var myLogin string
 	var myIdentities []string
 	if !noPersonalFlag && !noOwnersFlag {
-		login, ids, err := client.AuthIdentities()
+		login, ids, teamsOK, err := client.AuthIdentities()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warn: could not resolve your identities: %v (continuing without YOUR CRU)\n", err)
 		} else {
 			myLogin = login
 			myIdentities = ids
+			if !teamsOK {
+				// The default Codespaces GITHUB_TOKEN is the common case
+				// here. Tell the user their team-based ownership won't be
+				// counted so they don't trust the score blindly.
+				fmt.Fprintf(os.Stderr,
+					"warn: your token can't read team memberships (needs read:org scope); "+
+						"only direct CODEOWNERS matches on @%s will be detected. "+
+						"If you're in a Codespace, the default GITHUB_TOKEN doesn't have read:org. "+
+						"Export a personal token (with read:org) or run outside Codespaces for full team coverage.\n",
+					login)
+			}
 		}
 	}
 
@@ -144,7 +155,7 @@ func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []
 }
 
 // defaultRepo returns owner, repo if the current directory is a git
-// repository with a github.com remote. Otherwise returns "", "" — caller
+// repository with a github.com remote. Otherwise returns "", "" - caller
 // must require --repo for bare numbers.
 func defaultRepo() (string, string) {
 	if repoFlag != "" {

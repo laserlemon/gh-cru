@@ -56,7 +56,7 @@ func Parse(s, defaultOwner, defaultRepo string) (Ref, error) {
 		return Ref{Owner: defaultOwner, Repo: defaultRepo, Number: num}, nil
 	}
 
-	// URL forms — github.com/foo/bar/pull/N, http://, https://, with or without path.
+	// URL forms - github.com/foo/bar/pull/N, http://, https://, with or without path.
 	if strings.Contains(s, "/pull/") {
 		u, err := url.Parse(s)
 		if err == nil {

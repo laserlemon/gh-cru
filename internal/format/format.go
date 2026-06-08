@@ -124,7 +124,7 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 // truncation, and TTY/pipe degradation are handled the same way the gh
 // CLI itself does it. On a TTY: aligned columns, color, truncation if
 // the terminal is narrow. Off a TTY: tab-separated, no color, no
-// truncation — `gh cru | awk` works.
+// truncation - `gh cru | awk` works.
 func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int) {
 	tp := tableprinter.New(w, isTTY, width)
 
@@ -168,9 +168,9 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 		tp.AddField(fmt.Sprintf("%d", s.UnownedChanges), tableprinter.WithPadding(padLeft))
 		tp.AddField(fmt.Sprintf("%.3f", ushare), tableprinter.WithPadding(padLeft))
 		if color {
-			tp.AddField("—", tableprinter.WithColor(colorDim), tableprinter.WithPadding(padLeft))
+			tp.AddField("-", tableprinter.WithColor(colorDim), tableprinter.WithPadding(padLeft))
 		} else {
-			tp.AddField("—", tableprinter.WithPadding(padLeft))
+			tp.AddField("-", tableprinter.WithPadding(padLeft))
 		}
 		tp.EndRow()
 	}

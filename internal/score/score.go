@@ -15,17 +15,17 @@ import (
 //
 // Four distinct CRU numbers are computed; each answers a different question:
 //
-//   - CRU       — owner-agnostic; size_factor × risk. The PR's intrinsic
+//   - CRU       - owner-agnostic; size_factor × risk. The PR's intrinsic
 //                 review weight, as if a single reviewer owned every line.
 //                 Default scalar score: "how big a review is this?".
-//   - AuthorCRU — sum across all CODEOWNERS shares. Total review burden the
+//   - AuthorCRU - sum across all CODEOWNERS shares. Total review burden the
 //                 PR places on the team. Useful for the author and for
 //                 aggregate workload dashboards.
-//   - MyCRU     — what THIS PR actually costs the current user to review,
+//   - MyCRU     - what THIS PR actually costs the current user to review,
 //                 based on their @login + team memberships matching the
 //                 CODEOWNERS rules. Each owned file counted once even if
 //                 the user matches multiple owners (self + team).
-//   - Per-owner — the value in each Ownership.Score. Individual reviewer's
+//   - Per-owner - the value in each Ownership.Score. Individual reviewer's
 //                 actual scored work for their slice (does not deduplicate
 //                 across multiple of the user's identities).
 type PRScore struct {
@@ -53,7 +53,7 @@ type PRScore struct {
 }
 
 // CRU returns the owner-agnostic CRU: size_factor × risk. This is the
-// "what size review is this?" score — independent of who owns what.
+// "what size review is this?" score - independent of who owns what.
 func (s PRScore) CRU() float64 {
 	return s.SizeFactor * s.Risk
 }
@@ -81,7 +81,7 @@ type Ownership struct {
 
 // Compute builds a PRScore from a fetched PR, its file diffs, and the
 // (optional) CODEOWNERS ruleset. Pass nil ruleset for repos without
-// CODEOWNERS — the result will treat the whole PR as unowned.
+// CODEOWNERS - the result will treat the whole PR as unowned.
 //
 // myLogin is the authenticated user's GitHub @login (no leading @); empty
 // when running without personal scoring. myIdentities, when non-empty, are

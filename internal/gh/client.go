@@ -28,6 +28,7 @@ type Client struct {
 
 	authLogin    string
 	authTeams    []string
+	authTeamsOK  bool
 	authResolved bool
 }
 
@@ -71,14 +72,21 @@ type File struct {
 // identities: their @login plus every @org/team-slug they belong to. These
 // are the strings that match against codeowners rule owners.
 //
+// teamsOK indicates whether team enumeration via /user/teams succeeded. It
+// returns false when the token lacks `read:org` scope (e.g. the default
+// Codespaces GITHUB_TOKEN, fine-grained PATs without org permissions, or
+// any other narrow-scope token). When teamsOK is false, identities still
+// contains the @login so direct CODEOWNERS matches work, but team-based
+// ownership won't be detected - surface this to the user.
+//
 // Resolved once per process (paginated /user/teams may cost a few API calls
 // for accounts on many teams; cached afterwards).
-func (c *Client) AuthIdentities() (login string, identities []string, err error) {
+func (c *Client) AuthIdentities() (login string, identities []string, teamsOK bool, err error) {
 	c.mu.Lock()
 	if c.authResolved {
-		l, t := c.authLogin, c.authTeams
+		l, t, ok := c.authLogin, c.authTeams, c.authTeamsOK
 		c.mu.Unlock()
-		return l, t, nil
+		return l, t, ok, nil
 	}
 	c.mu.Unlock()
 
@@ -87,11 +95,12 @@ func (c *Client) AuthIdentities() (login string, identities []string, err error)
 		Login string `json:"login"`
 	}
 	if err := c.rest.Get("user", &u); err != nil {
-		return "", nil, fmt.Errorf("GET /user: %w", err)
+		return "", nil, false, fmt.Errorf("GET /user: %w", err)
 	}
 
 	// 2. /user/teams (paginated). Each team contributes "@org/team-slug".
 	teams := []string{"@" + u.Login}
+	teamsOK = true
 	for page := 1; page <= 50; page++ {
 		var batch []struct {
 			Slug         string `json:"slug"`
@@ -101,12 +110,16 @@ func (c *Client) AuthIdentities() (login string, identities []string, err error)
 		}
 		endpoint := fmt.Sprintf("user/teams?per_page=100&page=%d", page)
 		if err := c.rest.Get(endpoint, &batch); err != nil {
-			// /user/teams requires read:org. If the token lacks it, degrade
-			// gracefully to just the user login.
+			// /user/teams requires read:org. If the token lacks it (e.g.
+			// Codespaces ghu_ tokens, fine-grained PATs without the right
+			// permissions), record that and surface it to the caller -
+			// we still have the @login but team-based ownership won't
+			// be detected.
 			if isForbidden(err) || isNotFound(err) {
+				teamsOK = false
 				break
 			}
-			return "", nil, fmt.Errorf("GET %s: %w", endpoint, err)
+			return "", nil, false, fmt.Errorf("GET %s: %w", endpoint, err)
 		}
 		if len(batch) == 0 {
 			break
@@ -125,9 +138,10 @@ func (c *Client) AuthIdentities() (login string, identities []string, err error)
 	c.mu.Lock()
 	c.authLogin = u.Login
 	c.authTeams = teams
+	c.authTeamsOK = teamsOK
 	c.authResolved = true
 	c.mu.Unlock()
-	return u.Login, teams, nil
+	return u.Login, teams, teamsOK, nil
 }
 
 // FetchPR returns the basic PR metadata.
