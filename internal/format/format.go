@@ -92,6 +92,28 @@ func dim(s string, enabled bool) string {
 
 // Human writes a TTY-friendly summary for one PR. The caller passes the
 // gh term so we can detect TTY/color/width consistently with gh itself.
+//
+// Layout (no PR heading; that lived above this block previously):
+//
+//	LOC          <n>
+//	Size label   <bucket>
+//	Size factor  <f>
+//	Risk label   <label>
+//	Risk factor  <r>
+//	Normal CRU   <c>
+//	Total CRU    <sum across owners; team review burden>
+//	Your CRU     <c>            (only when MyLogin is known)
+//
+//	CODE OWNER                       LOC  FACTOR    CRU
+//	  github/some-team                34  0.895  0.971
+//	* github/team-you-own              4  0.105  0.114
+//
+//	Calculating your personal CRU requires read:org authorization to
+//	read your team memberships.   (only when teams couldn't be enumerated)
+//
+// PR title/state/author/diffstat and the PR heading itself are omitted:
+// callers running batches typically already know what PR they asked for,
+// and `gh pr view` covers the metadata.
 func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	isTTY := t.IsTerminalOutput()
 	color := t.IsColorEnabled()
@@ -100,23 +122,31 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 		width = 80
 	}
 
-	fmt.Fprintf(w, "%s#%d\n", repo, s.PR.Number)
-	// Header block: %-14s pads labels to 14 chars (`Size factor:` at 12 +
-	// 2-space min gap). Same on TTY and pipe.
-	fmt.Fprintf(w, "  %-14s%d\n", "LOC:", s.LOC)
-	fmt.Fprintf(w, "  %-14s%s\n", "Size label:", sizeColor(string(s.Bucket), color))
-	fmt.Fprintf(w, "  %-14s%.3f\n", "Size factor:", s.SizeFactor)
-	fmt.Fprintf(w, "  %-14s%s\n", "Risk label:", riskColor(riskLabel(s.Risk), color))
-	fmt.Fprintf(w, "  %-14s%.3f\n", "Risk factor:", s.Risk)
-	fmt.Fprintf(w, "  %-14s%.3f\n", "Normal CRU:", s.CRU())
+	// Header block: %-12s pads labels to 12 chars (`Size factor` at 11 +
+	// 1-space gap), matching the visual alignment in the user's mockup.
+	// Same on TTY and pipe.
+	fmt.Fprintf(w, "%-12s %d\n", "LOC", s.LOC)
+	fmt.Fprintf(w, "%-12s %s\n", "Size label", sizeColor(string(s.Bucket), color))
+	fmt.Fprintf(w, "%-12s %.3f\n", "Size factor", s.SizeFactor)
+	fmt.Fprintf(w, "%-12s %s\n", "Risk label", riskColor(riskLabel(s.Risk), color))
+	fmt.Fprintf(w, "%-12s %.3f\n", "Risk factor", s.Risk)
+	fmt.Fprintf(w, "%-12s %.3f\n", "Normal CRU", s.CRU())
 
 	if !s.HasCodeowners {
-		fmt.Fprintf(w, "  %-14s%.3f\n", "Total CRU:", s.CRU())
-		fmt.Fprintf(w, "  %-14s%s\n", "Owners:", dim("no CODEOWNERS file in repo", color))
+		fmt.Fprintf(w, "%-12s %.3f\n", "Total CRU", s.CRU())
+		if s.MyLogin != "" {
+			fmt.Fprintf(w, "%-12s %.3f\n", "Your CRU", s.CRU())
+		}
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "%s\n", dim("No CODEOWNERS file in repo.", color))
 		return
 	}
 
-	fmt.Fprintf(w, "  %-14s%.3f\n", "Total CRU:", s.AuthorCRU())
+	fmt.Fprintf(w, "%-12s %.3f\n", "Total CRU", s.AuthorCRU())
+	if s.MyLogin != "" {
+		fmt.Fprintf(w, "%-12s %.3f\n", "Your CRU", s.MyCRU)
+	}
+	fmt.Fprintln(w)
 	writeOwnerTable(w, s, isTTY, color, width)
 }
 
@@ -130,25 +160,25 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 
 	// Header. Right-align numeric columns; underline + dim styling matches
 	// gh CLI's tableprinter convention (iostreams.ColorScheme.TableHeader).
-	// OWNER header gets the same 2-space indent the `* `/`  ` marker eats
-	// on data rows below, so the column visually starts under the names.
+	// The `*` marker on data rows sits in a gutter LEFT of the table — see
+	// addOwnerRow's note. The CODE OWNER header therefore starts at column
+	// 0, flush with unmarked owner rows; marked rows visually break out
+	// into the gutter.
 	headerColor := func(v string) string { return v }
 	if color {
 		headerColor = colorTableHeader
 	}
-	tp.AddField("  OWNER", tableprinter.WithColor(headerColor))
+	tp.AddField("CODE OWNER", tableprinter.WithColor(headerColor))
 	tp.AddField("LOC", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
-	tp.AddField("SHARE", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
+	tp.AddField("FACTOR", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
 	tp.AddField("CRU", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
 	tp.EndRow()
 
 	mySet := makeIdentitySet(s.MyIdentities)
 
-	// Supplemental user row first.
-	if s.MyLogin != "" && s.MyOwnedLOC > 0 {
-		addOwnerRow(tp, true, s.MyLogin, s.MyOwnedLOC, s.MyShare, s.MyCRU, true, false, color)
-	}
-
+	// No dedicated user row above the table: "Your CRU" lives in the
+	// header block now. The table is purely the CODEOWNERS view, with
+	// `*` markers on teams the user belongs to.
 	for _, o := range s.SortedOwners() {
 		isTeamYou := mySet[strings.ToLower(o.Owner)]
 		addOwnerRow(tp, isTeamYou, displayOwner(o.Owner), o.OwnedLOC, o.Share, o.Score, false, isTeamYou, color)
@@ -159,11 +189,10 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 		if s.LOC > 0 {
 			ushare = float64(s.UnownedChanges) / float64(s.LOC)
 		}
-		ownerCell := "  (unowned)"
 		if color {
-			tp.AddField(ownerCell, tableprinter.WithColor(colorDim))
+			tp.AddField("(unowned)", tableprinter.WithColor(colorDim))
 		} else {
-			tp.AddField(ownerCell)
+			tp.AddField("(unowned)")
 		}
 		tp.AddField(fmt.Sprintf("%d", s.UnownedChanges), tableprinter.WithPadding(padLeft))
 		tp.AddField(fmt.Sprintf("%.3f", ushare), tableprinter.WithPadding(padLeft))
@@ -179,40 +208,44 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 		fmt.Fprintf(w, "  (table render error: %v)\n", err)
 	}
 
-	// Footnote: render only when the team enumeration was incomplete AND
-	// the user didn't surface in the table (no direct @login match).
-	// This is the Codespaces case: a default GITHUB_TOKEN can't read
-	// team membership, so a PR owned by a team the user is in shows up
-	// with no user row. We tell them once, quietly, in the right place.
+	// Footnote: render only when team enumeration was incomplete AND the
+	// user didn't surface in the table (no direct @login match). The
+	// Codespaces default GITHUB_TOKEN is the common case: a PR owned by a
+	// team the user is in shows up with no `*` marker and "Your CRU"
+	// reads 0.
 	if !s.TeamsResolved && s.MyLogin != "" && s.MyOwnedLOC == 0 {
-		note := fmt.Sprintf("(team memberships for @%s unavailable; needs read:org)", s.MyLogin)
+		fmt.Fprintln(w)
+		note := "Calculating your personal CRU requires read:org authorization to read your team memberships."
 		if color {
-			fmt.Fprintf(w, "  %s\n", colorDim(note))
+			fmt.Fprintln(w, colorDim(note))
 		} else {
-			fmt.Fprintf(w, "  %s\n", note)
+			fmt.Fprintln(w, note)
 		}
 	}
 }
 
-// addOwnerRow appends one owner row. The `* ` / `  ` marker is part of
-// the OWNER cell itself (not a separate column) so we don't pay a 2-space
-// delimiter for it. Coloring is applied only to the owner name portion,
-// leaving the marker plain (gh's `gh auth status` does the same with its
-// active-account `*`).
+// addOwnerRow appends one owner row. The `* ` marker sits in a "gutter"
+// LEFT of the CODE OWNER column (unmarked rows have no leading space at
+// all; marked rows visually break out left of the table). This matches
+// git branch's convention and keeps the data column tight.
+//
+// We achieve this without an extra column by *prepending* "* " to the
+// owner cell when marked, and accepting that the marked row is visually
+// 2 chars wider on the left than unmarked rows. tableprinter's width
+// calculation uses the widest cell, so the LOC/FACTOR/CRU columns still
+// align across all rows.
 func addOwnerRow(tp tableprinter.TablePrinter, marked bool, owner string, loc int, share, cru float64, isYou, isTeamYou, color bool) {
-	marker := "  "
+	cell := owner
 	if marked {
-		marker = "* "
+		cell = "* " + owner
 	}
-	// Color only the name; marker stays plain so it never looks "off".
-	var cell string
+	// Coloring is applied to the whole cell (including marker) so the bold
+	// extends over the `*`. The eye reads "this row is yours" as one unit.
 	switch {
 	case isYou && color:
-		cell = marker + colorBoldCyan(owner)
+		cell = colorBoldCyan(cell)
 	case isTeamYou && color:
-		cell = marker + colorBold(owner)
-	default:
-		cell = marker + owner
+		cell = colorBold(cell)
 	}
 	tp.AddField(cell)
 	tp.AddField(fmt.Sprintf("%d", loc), tableprinter.WithPadding(padLeft))
