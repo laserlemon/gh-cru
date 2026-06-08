@@ -61,7 +61,6 @@ func Human(w io.Writer, repo string, s score.PRScore) {
 	if !s.HasCodeowners {
 		fmt.Fprintf(w, "  Total CRU:      %.3f\n", s.CRU())
 		fmt.Fprintln(w, "  Owners:         no CODEOWNERS file in repo")
-		fmt.Fprintln(w)
 		return
 	}
 
@@ -89,8 +88,6 @@ func Human(w io.Writer, repo string, s score.PRScore) {
 	if s.UnownedChanges > 0 {
 		writeUnownedBlock(w, s.UnownedChanges, s.LOC)
 	}
-
-	fmt.Fprintln(w)
 }
 
 // writeOwnerBlock writes one owner's four-line block with the leading
