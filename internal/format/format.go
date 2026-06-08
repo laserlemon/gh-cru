@@ -39,13 +39,37 @@ func padLeft(width int, s string) string {
 // gh-style palette. mgutz/ansi style strings; gh CLI uses these directly
 // in cli/cli/pkg/iostreams/color.go.
 var (
-	colorGreen    = ansi.ColorFunc("green")
-	colorYellow   = ansi.ColorFunc("yellow")
-	colorRed      = ansi.ColorFunc("red")
 	colorDim      = ansi.ColorFunc("default+d")
 	colorBold     = ansi.ColorFunc("default+b")
 	colorBoldCyan = ansi.ColorFunc("cyan+b")
-	colorBoldRed  = ansi.ColorFunc("red+b")
+
+	// Size-bucket colors, matched to github/github's size/* PR labels so
+	// the ramp is visually familiar to anyone reviewing there. ANSI 256
+	// foreground codes; "default+d" or solid colors only — no bg tints
+	// (terminals can't fake the translucent fill the GitHub UI uses).
+	colorSizeXS = ansi.ColorFunc("42")  // bright green
+	colorSizeS  = ansi.ColorFunc("151") // sage
+	colorSizeM  = ansi.ColorFunc("185") // olive yellow
+	colorSizeL  = ansi.ColorFunc("209") // coral
+	colorSizeXL = ansi.ColorFunc("218") // pink
+
+	// Risk colors, matched to github/github's risk:* PR labels.
+	colorRiskLow  = ansi.ColorFunc("80")  // teal
+	colorRiskHigh = ansi.ColorFunc("217") // salmon
+
+	// Heading palette for multi-PR mode. Hashed by repo so all PRs from
+	// one repo share a color (visual grouping when running batches via
+	// `gh pr list | xargs gh cru`); mixing repos differentiates them.
+	// All entries are mid-saturation 256-color codes chosen to stay
+	// out of the way of the size/risk palette below them.
+	headingPalette = []func(string) string{
+		ansi.ColorFunc("110"), // pale blue
+		ansi.ColorFunc("139"), // mauve
+		ansi.ColorFunc("144"), // beige
+		ansi.ColorFunc("180"), // wheat
+		ansi.ColorFunc("103"), // periwinkle
+		ansi.ColorFunc("108"), // muted green
+	}
 
 	// Table header styling matches gh CLI's iostreams.ColorScheme.TableHeader:
 	// dim + underlined for dark themes, dim + underlined for unknown themes
@@ -55,32 +79,38 @@ var (
 	colorTableHeader = ansi.ColorFunc("default+du")
 )
 
-// sizeColor: traffic light. M stays neutral so outliers visually pop.
+// sizeColor maps the bucket label to its github/github-matched color
+// (XS bright green → XL pink). Falls back to the default fg when color
+// is disabled.
 func sizeColor(bucket string, enabled bool) string {
 	if !enabled {
 		return bucket
 	}
 	switch bucket {
-	case "XS", "S":
-		return colorGreen(bucket)
+	case "XS":
+		return colorSizeXS(bucket)
+	case "S":
+		return colorSizeS(bucket)
+	case "M":
+		return colorSizeM(bucket)
 	case "L":
-		return colorYellow(bucket)
+		return colorSizeL(bucket)
 	case "XL":
-		return colorRed(bucket)
-	default:
-		return bucket
+		return colorSizeXL(bucket)
 	}
+	return bucket
 }
 
-// riskColor: low dim, high bold red.
+// riskColor maps low/high to their github/github-matched label colors
+// (teal / salmon).
 func riskColor(label string, enabled bool) string {
 	if !enabled {
 		return label
 	}
 	if label == "high" {
-		return colorBoldRed(label)
+		return colorRiskHigh(label)
 	}
-	return colorDim(label)
+	return colorRiskLow(label)
 }
 
 func dim(s string, enabled bool) string {
@@ -129,35 +159,65 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term, showHeading b
 	// visual anchor. Suppressed in single-PR mode where there's nothing
 	// to disambiguate.
 	if showHeading {
-		fmt.Fprintf(w, "%s\n", dim(fmt.Sprintf("%s#%d", repo, s.PR.Number), color))
+		fmt.Fprintf(w, "%s\n\n", headingColor(repo, color)(fmt.Sprintf("%s#%d", repo, s.PR.Number)))
 	}
 
 	// Header block: %-12s pads labels to 12 chars (`Size factor` at 11 +
 	// 1-space gap), matching the visual alignment in the user's mockup.
-	// Same on TTY and pipe.
-	fmt.Fprintf(w, "%-12s %d\n", "LOC", s.LOC)
-	fmt.Fprintf(w, "%-12s %s\n", "Size label", sizeColor(string(s.Bucket), color))
-	fmt.Fprintf(w, "%-12s %.3f\n", "Size factor", s.SizeFactor)
-	fmt.Fprintf(w, "%-12s %s\n", "Risk label", riskColor(riskLabel(s.Risk), color))
-	fmt.Fprintf(w, "%-12s %.3f\n", "Risk factor", s.Risk)
-	fmt.Fprintf(w, "%-12s %.3f\n", "Normal CRU", s.CRU())
+	// Same on TTY and pipe. Labels render in the same gray used for table
+	// headers — `label` colorizes after padding so visible-width math
+	// stays correct.
+	fmt.Fprintf(w, "%s %d\n", label("LOC", color), s.LOC)
+	fmt.Fprintf(w, "%s %s\n", label("Size label", color), sizeColor(string(s.Bucket), color))
+	fmt.Fprintf(w, "%s %.3f\n", label("Size factor", color), s.SizeFactor)
+	fmt.Fprintf(w, "%s %s\n", label("Risk label", color), riskColor(riskLabel(s.Risk), color))
+	fmt.Fprintf(w, "%s %.3f\n", label("Risk factor", color), s.Risk)
+	fmt.Fprintf(w, "%s %.3f\n", label("Normal CRU", color), s.CRU())
 
 	if !s.HasCodeowners {
-		fmt.Fprintf(w, "%-12s %.3f\n", "Total CRU", s.CRU())
+		fmt.Fprintf(w, "%s %.3f\n", label("Total CRU", color), s.CRU())
 		if s.MyLogin != "" {
-			fmt.Fprintf(w, "%-12s %.3f\n", "Your CRU", s.CRU())
+			fmt.Fprintf(w, "%s %.3f\n", label("Your CRU", color), s.CRU())
 		}
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "%s\n", dim("No CODEOWNERS file in repo.", color))
 		return
 	}
 
-	fmt.Fprintf(w, "%-12s %.3f\n", "Total CRU", s.AuthorCRU())
+	fmt.Fprintf(w, "%s %.3f\n", label("Total CRU", color), s.AuthorCRU())
 	if s.MyLogin != "" {
-		fmt.Fprintf(w, "%-12s %.3f\n", "Your CRU", s.MyCRU)
+		fmt.Fprintf(w, "%s %.3f\n", label("Your CRU", color), s.MyCRU)
 	}
 	fmt.Fprintln(w)
 	writeOwnerTable(w, s, isTTY, color, width)
+}
+
+// label pads a metadata label to 12 chars and applies the same gray
+// styling used for table headers. Padding happens before the ANSI escape
+// so visible-width math (used by terminals to align columns) is correct.
+func label(s string, enabled bool) string {
+	padded := fmt.Sprintf("%-12s", s)
+	if !enabled {
+		return padded
+	}
+	return colorTableHeader(padded)
+}
+
+// headingColor returns a colorizer for the multi-PR heading, picked by
+// hashing the repo name. Same repo → same color; different repos →
+// (almost certainly) different colors, so adjacent PRs from different
+// repos visually separate while batches from one repo group together.
+// Returns identity when color is disabled.
+func headingColor(repo string, enabled bool) func(string) string {
+	if !enabled {
+		return func(s string) string { return s }
+	}
+	var h uint32 = 2166136261 // FNV-1a 32-bit offset basis
+	for i := 0; i < len(repo); i++ {
+		h ^= uint32(repo[i])
+		h *= 16777619
+	}
+	return headingPalette[int(h%uint32(len(headingPalette)))]
 }
 
 // writeOwnerTable uses cli/go-gh's tableprinter so column widths, padding,
