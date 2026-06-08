@@ -23,14 +23,14 @@ import (
 //
 //	<title> <repo>#<number>
 //	<state> • by @author • +adds -dels in N file(s)
-//	  size factor:  <f>
-//	  risk factor:  <r>
-//	  normal CRU:   <c>
-//	  your CRU:     <c>   (only if MyIdentities was provided)
+//	  Size factor:  <f>
+//	  Risk factor:  <r>
+//	  Normal CRU:   <c>
+//	  Your CRU:     <c>   (only if MyIdentities was provided)
 //	  CRU by owner:
 //	      @owner1   X LOC  Y%  →  Z CRU
 //	    * @owner2   X LOC  Y%  →  Z CRU
-//	  total CRU:    <sum>
+//	  Total CRU:    <sum>
 //
 // Owners on the user's team-list (or matching their login) get a leading
 // `* ` marker in the git-branch style. Non-matching rows are prefixed
@@ -41,18 +41,18 @@ func Human(w io.Writer, repo string, s score.PRScore) {
 	fmt.Fprintf(w, "%s • by @%s • +%d -%d in %d file(s)\n\n",
 		pr.State, pr.Author, pr.Additions, pr.Deletions, pr.Files)
 
-	fmt.Fprintf(w, "  size factor:  %.2f   (%d LOC, %s)\n", s.SizeFactor, s.LOC, s.Bucket)
-	fmt.Fprintf(w, "  risk factor:  %.1f   (%s)\n", s.Risk, riskTag(s.Risk))
-	fmt.Fprintf(w, "  normal CRU:   %.2f   (size × risk; PR-intrinsic weight)\n", s.CRU())
+	fmt.Fprintf(w, "  Size factor:  %.2f   (%d LOC, %s)\n", s.SizeFactor, s.LOC, s.Bucket)
+	fmt.Fprintf(w, "  Risk factor:  %.1f   (%s)\n", s.Risk, riskTag(s.Risk))
+	fmt.Fprintf(w, "  Normal CRU:   %.2f   (size × risk; PR-intrinsic weight)\n", s.CRU())
 
 	if !s.HasCodeowners {
 		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  ownership:    no CODEOWNERS file in repo\n")
+		fmt.Fprintf(w, "  Ownership:    no CODEOWNERS file in repo\n")
 		return
 	}
 
 	if len(s.MyIdentities) > 0 {
-		fmt.Fprintf(w, "  your CRU:     %.2f   (%d/%d LOC = %.1f%% match your identities)\n",
+		fmt.Fprintf(w, "  Your CRU:     %.2f   (%d/%d LOC = %.1f%% match your identities)\n",
 			s.MyCRU, s.MyOwnedLOC, s.LOC, s.MyShare*100)
 	}
 
@@ -71,7 +71,7 @@ func Human(w io.Writer, repo string, s score.PRScore) {
 		fmt.Fprintf(w, "      %-40s  %5d LOC  (unowned, not attributed)\n",
 			"", s.UnownedChanges)
 	}
-	fmt.Fprintf(w, "  total CRU:    %.2f   (sum across owners; team review burden)\n",
+	fmt.Fprintf(w, "  Total CRU:    %.2f   (sum across owners; team review burden)\n",
 		s.AuthorCRU())
 }
 
