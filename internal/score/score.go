@@ -3,7 +3,6 @@
 package score
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/hmarr/codeowners"
@@ -36,8 +35,14 @@ type PRScore struct {
 	Bucket         cru.Size
 	Risk           float64
 	HasCodeowners  bool
+	OwnerOrder     []string             // first-seen order while walking PR files
 	OwnershipMap   map[string]Ownership // owner login → ownership info
 	UnownedChanges int                  // LOC not covered by any CODEOWNERS rule
+
+	// MyLogin is the authenticated user's GitHub @login (without the @).
+	// Used as the label for the supplemental "user row" in the owners block
+	// when they have any ownership in the PR (direct or via team).
+	MyLogin string
 
 	// MyIdentities are the CODEOWNERS-compatible identities used to compute
 	// MyCRU. Empty when no personal scoring was requested (e.g. --skip-ownership).
@@ -78,10 +83,12 @@ type Ownership struct {
 // (optional) CODEOWNERS ruleset. Pass nil ruleset for repos without
 // CODEOWNERS — the result will treat the whole PR as unowned.
 //
-// myIdentities, when non-empty, are the CODEOWNERS-compatible identity
-// strings (e.g. ["@laserlemon", "@github/justice-league"]) used to compute
-// MyCRU. Pass nil to skip personal scoring.
-func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel string, myIdentities []string) PRScore {
+// myLogin is the authenticated user's GitHub @login (no leading @); empty
+// when running without personal scoring. myIdentities, when non-empty, are
+// the CODEOWNERS-compatible identity strings (e.g. ["@laserlemon",
+// "@github/justice-league"]) used to compute MyCRU. Pass nil to skip
+// personal scoring.
+func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel string, myLogin string, myIdentities []string) PRScore {
 	risk := cru.RiskLow
 	if hasLabel(pr.Labels, riskLabel) {
 		risk = cru.RiskHigh
@@ -98,6 +105,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 		Risk:          risk,
 		HasCodeowners: owners != nil,
 		OwnershipMap:  make(map[string]Ownership),
+		MyLogin:       myLogin,
 		MyIdentities:  myIdentities,
 	}
 
@@ -114,6 +122,8 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 	}
 
 	ownedTotals := make(map[string]int)
+	ownerOrder := make([]string, 0)
+	seen := make(map[string]bool)
 	myOwnedLOC := 0
 	for _, f := range files {
 		rule, err := owners.Match(f.Path)
@@ -123,8 +133,13 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 		}
 		matchedMe := false
 		for _, o := range rule.Owners {
-			ownedTotals[o.String()] += f.Changes
-			if !matchedMe && mySet[strings.ToLower(o.String())] {
+			key := o.String()
+			ownedTotals[key] += f.Changes
+			if !seen[key] {
+				seen[key] = true
+				ownerOrder = append(ownerOrder, key)
+			}
+			if !matchedMe && mySet[strings.ToLower(key)] {
 				matchedMe = true
 			}
 		}
@@ -132,6 +147,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 			myOwnedLOC += f.Changes
 		}
 	}
+	result.OwnerOrder = ownerOrder
 
 	// Use the file-changes sum as denominator (see prior note about
 	// renames making pr.LOC ≠ sum(file.Changes)).
@@ -165,22 +181,18 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 	return result
 }
 
-// SortedOwners returns ownerships sorted by descending score.
+// SortedOwners returns ownerships in the order CODEOWNERS owners were
+// first encountered while walking the PR's changed files. This preserves
+// any deliberate priority encoded by file ordering and stays stable
+// across risk/score perturbations. Callers that want the current user
+// hoisted to the top (e.g. the Human formatter) do that themselves.
 func (s PRScore) SortedOwners() []Ownership {
 	out := make([]Ownership, 0, len(s.OwnershipMap))
-	for _, o := range s.OwnershipMap {
-		out = append(out, o)
-	}
-	slices.SortFunc(out, func(a, b Ownership) int {
-		switch {
-		case a.Score > b.Score:
-			return -1
-		case a.Score < b.Score:
-			return 1
-		default:
-			return strings.Compare(a.Owner, b.Owner)
+	for _, owner := range s.OwnerOrder {
+		if o, ok := s.OwnershipMap[owner]; ok {
+			out = append(out, o)
 		}
-	})
+	}
 	return out
 }
 

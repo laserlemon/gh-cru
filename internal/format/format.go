@@ -1,7 +1,7 @@
 // Package format renders PRScore results in three modes, modeled on the
 // gh CLI's own output structure (see cli/cli/pkg/cmd/pr/view/view.go):
 //
-//   - Human: TTY-friendly, two-line header, indented sections, ANSI-free.
+//   - Human: TTY-friendly, indented sections, ANSI-free.
 //   - Script: tab-separated key:\tvalue rows for grep/awk pipelines.
 //   - JSON:   structured, pipe-friendly for jq.
 //
@@ -19,63 +19,99 @@ import (
 
 // Human writes a TTY-friendly summary for one PR.
 //
-// Layout matches the locked output spec:
+// Layout:
 //
 //	<repo>#<number>
-//	  Size factor:  <f>
-//	  Risk factor:  <r>
-//	  Normal CRU:   <c>
-//	  Your CRU:     <c>   (only if MyIdentities was provided)
-//	  CRU by owner:
-//	      @owner1   X LOC  Y%  →  Z CRU
-//	    * @owner2   X LOC  Y%  →  Z CRU
-//	  Total CRU:    <sum>
+//	  LOC:            <n>
+//	  Size label:     <bucket>
+//	  Size factor:    <f>
+//	  Risk label:     <label>
+//	  Risk factor:    <r>
+//	  Normal CRU:     <c>
+//	  Total CRU:      <sum across owners; team review burden>
+//	  Owners:
+//	  * <login>                  (user row, only if user matched any owner)
+//	      Owned LOC:         <n>
+//	      Ownership factor:  <s>
+//	      Requested CRU:     <c>
+//	  * <owner1>                 (* marks owners the user is part of)
+//	      Owned LOC:         <n>
+//	      Ownership factor:  <s>
+//	      Requested CRU:     <c>
+//	    <owner2>
+//	      ...
 //
 // PR title/state/author/diffstat are intentionally omitted: the diff size
 // is already encoded in Size factor, and `gh pr view` covers the rest.
 // Use --json for the full metadata payload.
 //
-// Owners on the user's team-list (or matching their login) get a leading
-// `* ` marker in the git-branch style. Non-matching rows are prefixed
-// with two spaces so columns align.
+// Math contract: per-owner CRU values are summed unrounded for Total CRU,
+// then rounded for display. The user row is supplemental and is NOT
+// included in Total CRU — Total CRU is computed independent of who's
+// asking.
 func Human(w io.Writer, repo string, s score.PRScore) {
 	fmt.Fprintf(w, "%s#%d\n", repo, s.PR.Number)
-	fmt.Fprintln(w)
-
-	fmt.Fprintf(w, "  Size factor:  %.2f   (%d LOC, %s)\n", s.SizeFactor, s.LOC, s.Bucket)
-	fmt.Fprintf(w, "  Risk factor:  %.1f   (%s)\n", s.Risk, riskTag(s.Risk))
-	fmt.Fprintf(w, "  Normal CRU:   %.2f   (size × risk; PR-intrinsic weight)\n", s.CRU())
+	fmt.Fprintf(w, "  LOC:            %d\n", s.LOC)
+	fmt.Fprintf(w, "  Size label:     %s\n", s.Bucket)
+	fmt.Fprintf(w, "  Size factor:    %.3f\n", s.SizeFactor)
+	fmt.Fprintf(w, "  Risk label:     %s\n", riskLabel(s.Risk))
+	fmt.Fprintf(w, "  Risk factor:    %.3f\n", s.Risk)
+	fmt.Fprintf(w, "  Normal CRU:     %.3f\n", s.CRU())
 
 	if !s.HasCodeowners {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  Ownership:    no CODEOWNERS file in repo\n")
+		fmt.Fprintf(w, "  Total CRU:      %.3f\n", s.CRU())
+		fmt.Fprintln(w, "  Owners:         no CODEOWNERS file in repo")
 		fmt.Fprintln(w)
 		return
 	}
 
-	if len(s.MyIdentities) > 0 {
-		fmt.Fprintf(w, "  Your CRU:     %.2f   (%d/%d LOC = %.1f%% match your identities)\n",
-			s.MyCRU, s.MyOwnedLOC, s.LOC, s.MyShare*100)
-	}
+	fmt.Fprintf(w, "  Total CRU:      %.3f\n", s.AuthorCRU())
+	fmt.Fprintln(w, "  Owners:")
 
 	mySet := makeIdentitySet(s.MyIdentities)
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  CRU by owner:\n")
-	for _, o := range s.SortedOwners() {
+	owners := s.SortedOwners()
+
+	// Supplemental user row first (only when the user actually owns LOC,
+	// directly or via team). Label is the @login, not any team name —
+	// this is "what does YOUR review queue look like."
+	if s.MyLogin != "" && s.MyOwnedLOC > 0 {
+		writeOwnerBlock(w, "* ", s.MyLogin, s.MyOwnedLOC, s.MyShare, s.MyCRU)
+	}
+
+	for _, o := range owners {
 		mark := "  "
 		if mySet[strings.ToLower(o.Owner)] {
 			mark = "* "
 		}
-		fmt.Fprintf(w, "    %s%-40s  %5d LOC  %5.1f%%  →  %.2f CRU\n",
-			mark, o.Owner, o.OwnedLOC, o.Share*100, o.Score)
+		writeOwnerBlock(w, mark, displayOwner(o.Owner), o.OwnedLOC, o.Share, o.Score)
 	}
+
 	if s.UnownedChanges > 0 {
-		fmt.Fprintf(w, "      %-40s  %5d LOC  (unowned, not attributed)\n",
-			"", s.UnownedChanges)
+		writeUnownedBlock(w, s.UnownedChanges, s.LOC)
 	}
-	fmt.Fprintf(w, "  Total CRU:    %.2f   (sum across owners; team review burden)\n",
-		s.AuthorCRU())
+
 	fmt.Fprintln(w)
+}
+
+// writeOwnerBlock writes one owner's four-line block with the leading
+// mark (`* ` or `  `) on the heading line. Values are rounded only for
+// display; callers pass the full-precision floats.
+func writeOwnerBlock(w io.Writer, mark, label string, ownedLOC int, share, requestedCRU float64) {
+	fmt.Fprintf(w, "  %s%s\n", mark, label)
+	fmt.Fprintf(w, "      Owned LOC:         %d\n", ownedLOC)
+	fmt.Fprintf(w, "      Ownership factor:  %.3f\n", share)
+	fmt.Fprintf(w, "      Requested CRU:     %.3f\n", requestedCRU)
+}
+
+func writeUnownedBlock(w io.Writer, unownedLOC, totalLOC int) {
+	share := 0.0
+	if totalLOC > 0 {
+		share = float64(unownedLOC) / float64(totalLOC)
+	}
+	fmt.Fprintf(w, "    (unowned)\n")
+	fmt.Fprintf(w, "      Owned LOC:         %d\n", unownedLOC)
+	fmt.Fprintf(w, "      Ownership factor:  %.3f\n", share)
+	fmt.Fprintf(w, "      Requested CRU:     (not attributed)\n")
 }
 
 func makeIdentitySet(ids []string) map[string]bool {
@@ -86,8 +122,15 @@ func makeIdentitySet(ids []string) map[string]bool {
 	return m
 }
 
+// displayOwner strips the leading "@" from CODEOWNERS strings for display
+// (CODEOWNERS always starts owner strings with "@"; the symbol carries no
+// info). The data layer keeps the canonical form.
+func displayOwner(s string) string {
+	return strings.TrimPrefix(s, "@")
+}
+
 // Script writes tab-separated key:\tvalue rows, gh-style. Designed for
-// pipelines: `gh cru 123 | grep ^cru:`.
+// pipelines: `gh cru 123 | grep ^normal_cru:`.
 //
 // Multi-PR runs emit a blank line between PRs.
 func Script(w io.Writer, repo string, s score.PRScore) {
@@ -102,13 +145,16 @@ func Script(w io.Writer, repo string, s score.PRScore) {
 		{"deletions", fmt.Sprintf("%d", pr.Deletions)},
 		{"loc", fmt.Sprintf("%d", s.LOC)},
 		{"files", fmt.Sprintf("%d", pr.Files)},
-		{"bucket", string(s.Bucket)},
+		{"size_label", string(s.Bucket)},
 		{"size_factor", fmt.Sprintf("%.6f", s.SizeFactor)},
-		{"risk", fmt.Sprintf("%.1f", s.Risk)},
-		{"cru", fmt.Sprintf("%.6f", s.CRU())},
-		{"author_cru", fmt.Sprintf("%.6f", s.AuthorCRU())},
-		{"my_cru", fmt.Sprintf("%.6f", s.MyCRU)},
-		{"my_share", fmt.Sprintf("%.6f", s.MyShare)},
+		{"risk_label", riskLabel(s.Risk)},
+		{"risk_factor", fmt.Sprintf("%.6f", s.Risk)},
+		{"normal_cru", fmt.Sprintf("%.6f", s.CRU())},
+		{"total_cru", fmt.Sprintf("%.6f", s.AuthorCRU())},
+		{"my_login", s.MyLogin},
+		{"my_owned_loc", fmt.Sprintf("%d", s.MyOwnedLOC)},
+		{"my_ownership_factor", fmt.Sprintf("%.6f", s.MyShare)},
+		{"my_requested_cru", fmt.Sprintf("%.6f", s.MyCRU)},
 		{"has_codeowners", fmt.Sprintf("%t", s.HasCodeowners)},
 	}
 	for _, kv := range rows {
@@ -128,11 +174,17 @@ func Script(w io.Writer, repo string, s score.PRScore) {
 // runs is opt-in via a `--compact` flag in the future).
 func JSON(w io.Writer, repo string, s score.PRScore) error {
 	type ownerJSON struct {
-		Owner    string  `json:"owner"`
-		OwnedLOC int     `json:"owned_loc"`
-		Share    float64 `json:"share"`
-		Score    float64 `json:"score"`
-		IsYou    bool    `json:"is_you"`
+		Owner            string  `json:"owner"`
+		OwnedLOC         int     `json:"owned_loc"`
+		OwnershipFactor  float64 `json:"ownership_factor"`
+		RequestedCRU     float64 `json:"requested_cru"`
+		IsYou            bool    `json:"is_you"`
+	}
+	type youJSON struct {
+		Login            string  `json:"login"`
+		OwnedLOC         int     `json:"owned_loc"`
+		OwnershipFactor  float64 `json:"ownership_factor"`
+		RequestedCRU     float64 `json:"requested_cru"`
 	}
 	type out struct {
 		Repo          string      `json:"repo"`
@@ -144,28 +196,37 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		Deletions     int         `json:"deletions"`
 		LOC           int         `json:"loc"`
 		Files         int         `json:"files"`
-		Bucket        string      `json:"bucket"`
+		SizeLabel     string      `json:"size_label"`
 		SizeFactor    float64     `json:"size_factor"`
-		Risk          float64     `json:"risk"`
-		CRU           float64     `json:"cru"`             // owner-agnostic
-		AuthorCRU     float64     `json:"author_cru"`      // team review burden
-		MyCRU         float64     `json:"my_cru"`          // current user's burden
-		MyShare       float64     `json:"my_share"`        // current user's LOC share
+		RiskLabel     string      `json:"risk_label"`
+		RiskFactor    float64     `json:"risk_factor"`
+		NormalCRU     float64     `json:"normal_cru"`     // size × risk
+		TotalCRU      float64     `json:"total_cru"`      // Σ per-owner; review burden
+		You           *youJSON    `json:"you,omitempty"`  // supplemental user row
 		MyIdentities  []string    `json:"my_identities,omitempty"`
 		HasCodeowners bool        `json:"has_codeowners"`
 		Owners        []ownerJSON `json:"owners"`
-		Unowned       int         `json:"unowned_loc"`
+		UnownedLOC    int         `json:"unowned_loc"`
 	}
 	owners := make([]ownerJSON, 0)
 	mySet := makeIdentitySet(s.MyIdentities)
 	for _, o := range s.SortedOwners() {
 		owners = append(owners, ownerJSON{
-			Owner:    o.Owner,
-			OwnedLOC: o.OwnedLOC,
-			Share:    o.Share,
-			Score:    o.Score,
-			IsYou:    mySet[strings.ToLower(o.Owner)],
+			Owner:           o.Owner,
+			OwnedLOC:        o.OwnedLOC,
+			OwnershipFactor: o.Share,
+			RequestedCRU:    o.Score,
+			IsYou:           mySet[strings.ToLower(o.Owner)],
 		})
+	}
+	var you *youJSON
+	if s.MyLogin != "" && s.MyOwnedLOC > 0 {
+		you = &youJSON{
+			Login:           s.MyLogin,
+			OwnedLOC:        s.MyOwnedLOC,
+			OwnershipFactor: s.MyShare,
+			RequestedCRU:    s.MyCRU,
+		}
 	}
 	o := out{
 		Repo:          repo,
@@ -177,26 +238,26 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		Deletions:     s.PR.Deletions,
 		LOC:           s.LOC,
 		Files:         s.PR.Files,
-		Bucket:        string(s.Bucket),
+		SizeLabel:     string(s.Bucket),
 		SizeFactor:    s.SizeFactor,
-		Risk:          s.Risk,
-		CRU:           s.CRU(),
-		AuthorCRU:     s.AuthorCRU(),
-		MyCRU:         s.MyCRU,
-		MyShare:       s.MyShare,
+		RiskLabel:     riskLabel(s.Risk),
+		RiskFactor:    s.Risk,
+		NormalCRU:     s.CRU(),
+		TotalCRU:      s.AuthorCRU(),
+		You:           you,
 		MyIdentities:  s.MyIdentities,
 		HasCodeowners: s.HasCodeowners,
 		Owners:        owners,
-		Unowned:       s.UnownedChanges,
+		UnownedLOC:    s.UnownedChanges,
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(o)
 }
 
-func riskTag(r float64) string {
+func riskLabel(r float64) string {
 	if r > 1.0 {
-		return fmt.Sprintf("high (×%.0f)", r)
+		return "high"
 	}
 	return "low"
 }

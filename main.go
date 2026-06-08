@@ -81,12 +81,14 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	var myLogin string
 	var myIdentities []string
 	if !noPersonalFlag && !noOwnersFlag {
-		_, ids, err := client.AuthIdentities()
+		login, ids, err := client.AuthIdentities()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warn: could not resolve your identities: %v (continuing without YOUR CRU)\n", err)
 		} else {
+			myLogin = login
 			myIdentities = ids
 		}
 	}
@@ -99,7 +101,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 			exitErr = 1
 			continue
 		}
-		if err := scoreOne(client, ref, myIdentities); err != nil {
+		if err := scoreOne(client, ref, myLogin, myIdentities); err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", ref, err)
 			exitErr = 1
 			continue
@@ -111,7 +113,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func scoreOne(client *ghc.Client, ref prref.Ref, myIdentities []string) error {
+func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []string) error {
 	pr, err := client.FetchPR(ref)
 	if err != nil {
 		return err
@@ -130,7 +132,7 @@ func scoreOne(client *ghc.Client, ref prref.Ref, myIdentities []string) error {
 		}
 	}
 
-	s := score.Compute(pr, files, owners, riskLabelFlag, myIdentities)
+	s := score.Compute(pr, files, owners, riskLabelFlag, myLogin, myIdentities)
 	repoStr := fmt.Sprintf("%s/%s", ref.Owner, ref.Repo)
 	if jsonFlag {
 		return format.JSON(os.Stdout, repoStr, s)
