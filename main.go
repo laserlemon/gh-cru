@@ -14,8 +14,8 @@ import (
 	"os"
 
 	"github.com/cli/go-gh/v2/pkg/repository"
+	"github.com/cli/go-gh/v2/pkg/term"
 	"github.com/hmarr/codeowners"
-	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/laserlemon/gh-cru/internal/format"
@@ -137,11 +137,9 @@ func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []
 	if jsonFlag {
 		return format.JSON(os.Stdout, repoStr, s)
 	}
-	if isatty.IsTerminal(os.Stdout.Fd()) {
-		format.Human(os.Stdout, repoStr, s)
-		return nil
-	}
-	format.Script(os.Stdout, repoStr, s)
+	// One code path for human and script modes: tableprinter degrades to
+	// tab-separated automatically when stdout isn't a TTY.
+	format.Human(os.Stdout, repoStr, s, term.FromEnv())
 	return nil
 }
 

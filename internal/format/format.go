@@ -1,11 +1,14 @@
-// Package format renders PRScore results in three modes, modeled on the
-// gh CLI's own output structure (see cli/cli/pkg/cmd/pr/view/view.go):
+// Package format renders PRScore results in two modes, modeled on gh's
+// own output structure (see cli/cli/pkg/cmd/pr/list and friends):
 //
-//   - Human: TTY-friendly, indented sections, ANSI-free.
-//   - Script: tab-separated key:\tvalue rows for grep/awk pipelines.
+//   - Human: TTY-friendly. Indented header block, gh-style tableprinter
+//     for the owners section with traffic-light coloring. Honors NO_COLOR
+//     and CLICOLOR* env vars via cli/go-gh's term package.
 //   - JSON:   structured, pipe-friendly for jq.
 //
-// The caller picks the mode based on TTY detection and the --json flag.
+// When stdout isn't a TTY, the tableprinter automatically degrades to
+// tab-separated output, so `gh cru 123 | awk` still works. The header
+// block also drops color in that mode (delegated to the colorizer).
 package format
 
 import (
@@ -14,104 +17,194 @@ import (
 	"io"
 	"strings"
 
+	"github.com/cli/go-gh/v2/pkg/tableprinter"
+	"github.com/cli/go-gh/v2/pkg/term"
+	"github.com/cli/go-gh/v2/pkg/text"
+	"github.com/mgutz/ansi"
+
 	"github.com/laserlemon/gh-cru/internal/score"
 )
 
-// Human writes a TTY-friendly summary for one PR.
-//
-// Layout:
-//
-//	<repo>#<number>
-//	  LOC:            <n>
-//	  Size label:     <bucket>
-//	  Size factor:    <f>
-//	  Risk label:     <label>
-//	  Risk factor:    <r>
-//	  Normal CRU:     <c>
-//	  Total CRU:      <sum across owners; team review burden>
-//	  Owners:
-//	  * <login>                  (user row, only if user matched any owner)
-//	      Owned LOC:         <n>
-//	      Ownership factor:  <s>
-//	      Requested CRU:     <c>
-//	  * <owner1>                 (* marks owners the user is part of)
-//	      Owned LOC:         <n>
-//	      Ownership factor:  <s>
-//	      Requested CRU:     <c>
-//	    <owner2>
-//	      ...
-//
-// PR title/state/author/diffstat are intentionally omitted: the diff size
-// is already encoded in Size factor, and `gh pr view` covers the rest.
-// Use --json for the full metadata payload.
-//
-// Math contract: per-owner CRU values are summed unrounded for Total CRU,
-// then rounded for display. The user row is supplemental and is NOT
-// included in Total CRU — Total CRU is computed independent of who's
-// asking.
-func Human(w io.Writer, repo string, s score.PRScore) {
+// padLeft right-aligns s by padding spaces on the left. tableprinter
+// provides text.PadRight for left-aligned; we need the mirror for
+// numeric columns.
+func padLeft(width int, s string) string {
+	w := text.DisplayWidth(s)
+	if w >= width {
+		return s
+	}
+	return strings.Repeat(" ", width-w) + s
+}
+
+// gh-style palette. mgutz/ansi style strings; gh CLI uses these directly
+// in cli/cli/pkg/iostreams/color.go.
+var (
+	colorGreen    = ansi.ColorFunc("green")
+	colorYellow   = ansi.ColorFunc("yellow")
+	colorRed      = ansi.ColorFunc("red")
+	colorDim      = ansi.ColorFunc("default+d")
+	colorBold     = ansi.ColorFunc("default+b")
+	colorBoldCyan = ansi.ColorFunc("cyan+b")
+	colorBoldRed  = ansi.ColorFunc("red+b")
+
+	// Table header styling matches gh CLI's iostreams.ColorScheme.TableHeader:
+	// dim + underlined for dark themes, dim + underlined for unknown themes
+	// (no theme detection in go-gh's term package). gh uses `white+du` for
+	// dark and `black+hu` for light; we use `default+du` so it adapts to the
+	// terminal's foreground color without us having to detect theme.
+	colorTableHeader = ansi.ColorFunc("default+du")
+)
+
+// sizeColor: traffic light. M stays neutral so outliers visually pop.
+func sizeColor(bucket string, enabled bool) string {
+	if !enabled {
+		return bucket
+	}
+	switch bucket {
+	case "XS", "S":
+		return colorGreen(bucket)
+	case "L":
+		return colorYellow(bucket)
+	case "XL":
+		return colorRed(bucket)
+	default:
+		return bucket
+	}
+}
+
+// riskColor: low dim, high bold red.
+func riskColor(label string, enabled bool) string {
+	if !enabled {
+		return label
+	}
+	if label == "high" {
+		return colorBoldRed(label)
+	}
+	return colorDim(label)
+}
+
+func dim(s string, enabled bool) string {
+	if !enabled {
+		return s
+	}
+	return colorDim(s)
+}
+
+// Human writes a TTY-friendly summary for one PR. The caller passes the
+// gh term so we can detect TTY/color/width consistently with gh itself.
+func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
+	isTTY := t.IsTerminalOutput()
+	color := t.IsColorEnabled()
+	width, _, _ := t.Size()
+	if width <= 0 {
+		width = 80
+	}
+
 	fmt.Fprintf(w, "%s#%d\n", repo, s.PR.Number)
-	// Header block: %-14s pads labels to 14 chars, which is `Size factor:`
-	// (longest at 12) + 2 spaces. Shorter labels get more padding to align.
+	// Header block: %-14s pads labels to 14 chars (`Size factor:` at 12 +
+	// 2-space min gap). Same on TTY and pipe.
 	fmt.Fprintf(w, "  %-14s%d\n", "LOC:", s.LOC)
-	fmt.Fprintf(w, "  %-14s%s\n", "Size label:", s.Bucket)
+	fmt.Fprintf(w, "  %-14s%s\n", "Size label:", sizeColor(string(s.Bucket), color))
 	fmt.Fprintf(w, "  %-14s%.3f\n", "Size factor:", s.SizeFactor)
-	fmt.Fprintf(w, "  %-14s%s\n", "Risk label:", riskLabel(s.Risk))
+	fmt.Fprintf(w, "  %-14s%s\n", "Risk label:", riskColor(riskLabel(s.Risk), color))
 	fmt.Fprintf(w, "  %-14s%.3f\n", "Risk factor:", s.Risk)
 	fmt.Fprintf(w, "  %-14s%.3f\n", "Normal CRU:", s.CRU())
 
 	if !s.HasCodeowners {
 		fmt.Fprintf(w, "  %-14s%.3f\n", "Total CRU:", s.CRU())
-		fmt.Fprintf(w, "  %-14s%s\n", "Owners:", "no CODEOWNERS file in repo")
+		fmt.Fprintf(w, "  %-14s%s\n", "Owners:", dim("no CODEOWNERS file in repo", color))
 		return
 	}
 
 	fmt.Fprintf(w, "  %-14s%.3f\n", "Total CRU:", s.AuthorCRU())
-	fmt.Fprintln(w, "  Owners:")
+	writeOwnerTable(w, s, isTTY, color, width)
+}
+
+// writeOwnerTable uses cli/go-gh's tableprinter so column widths, padding,
+// truncation, and TTY/pipe degradation are handled the same way the gh
+// CLI itself does it. On a TTY: aligned columns, color, truncation if
+// the terminal is narrow. Off a TTY: tab-separated, no color, no
+// truncation — `gh cru | awk` works.
+func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int) {
+	tp := tableprinter.New(w, isTTY, width)
+
+	// Header. Right-align numeric columns; underline + dim styling matches
+	// gh CLI's tableprinter convention (iostreams.ColorScheme.TableHeader).
+	// OWNER header gets the same 2-space indent the `* `/`  ` marker eats
+	// on data rows below, so the column visually starts under the names.
+	headerColor := func(v string) string { return v }
+	if color {
+		headerColor = colorTableHeader
+	}
+	tp.AddField("  OWNER", tableprinter.WithColor(headerColor))
+	tp.AddField("LOC", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
+	tp.AddField("SHARE", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
+	tp.AddField("CRU", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
+	tp.EndRow()
 
 	mySet := makeIdentitySet(s.MyIdentities)
-	owners := s.SortedOwners()
 
-	// Supplemental user row first (only when the user actually owns LOC,
-	// directly or via team). Label is the @login, not any team name —
-	// this is "what does YOUR review queue look like."
+	// Supplemental user row first.
 	if s.MyLogin != "" && s.MyOwnedLOC > 0 {
-		writeOwnerBlock(w, "* ", s.MyLogin, s.MyOwnedLOC, s.MyShare, s.MyCRU)
+		addOwnerRow(tp, true, s.MyLogin, s.MyOwnedLOC, s.MyShare, s.MyCRU, true, false, color)
 	}
 
-	for _, o := range owners {
-		mark := "  "
-		if mySet[strings.ToLower(o.Owner)] {
-			mark = "* "
-		}
-		writeOwnerBlock(w, mark, displayOwner(o.Owner), o.OwnedLOC, o.Share, o.Score)
+	for _, o := range s.SortedOwners() {
+		isTeamYou := mySet[strings.ToLower(o.Owner)]
+		addOwnerRow(tp, isTeamYou, displayOwner(o.Owner), o.OwnedLOC, o.Share, o.Score, false, isTeamYou, color)
 	}
 
 	if s.UnownedChanges > 0 {
-		writeUnownedBlock(w, s.UnownedChanges, s.LOC)
+		ushare := 0.0
+		if s.LOC > 0 {
+			ushare = float64(s.UnownedChanges) / float64(s.LOC)
+		}
+		ownerCell := "  (unowned)"
+		if color {
+			tp.AddField(ownerCell, tableprinter.WithColor(colorDim))
+		} else {
+			tp.AddField(ownerCell)
+		}
+		tp.AddField(fmt.Sprintf("%d", s.UnownedChanges), tableprinter.WithPadding(padLeft))
+		tp.AddField(fmt.Sprintf("%.3f", ushare), tableprinter.WithPadding(padLeft))
+		if color {
+			tp.AddField("—", tableprinter.WithColor(colorDim), tableprinter.WithPadding(padLeft))
+		} else {
+			tp.AddField("—", tableprinter.WithPadding(padLeft))
+		}
+		tp.EndRow()
+	}
+
+	if err := tp.Render(); err != nil {
+		fmt.Fprintf(w, "  (table render error: %v)\n", err)
 	}
 }
 
-// writeOwnerBlock writes one owner's four-line block with the leading
-// mark (`* ` or `  `) on the heading line. Labels are padded to a 19-char
-// column (longest is `Ownership factor:` at 17 + 2-space min gap). Values
-// are rounded only for display; callers pass the full-precision floats.
-func writeOwnerBlock(w io.Writer, mark, label string, ownedLOC int, share, requestedCRU float64) {
-	fmt.Fprintf(w, "  %s%s\n", mark, label)
-	fmt.Fprintf(w, "      %-19s%d\n", "Owned LOC:", ownedLOC)
-	fmt.Fprintf(w, "      %-19s%.3f\n", "Ownership factor:", share)
-	fmt.Fprintf(w, "      %-19s%.3f\n", "Requested CRU:", requestedCRU)
-}
-
-func writeUnownedBlock(w io.Writer, unownedLOC, totalLOC int) {
-	share := 0.0
-	if totalLOC > 0 {
-		share = float64(unownedLOC) / float64(totalLOC)
+// addOwnerRow appends one owner row. The `* ` / `  ` marker is part of
+// the OWNER cell itself (not a separate column) so we don't pay a 2-space
+// delimiter for it. Coloring is applied only to the owner name portion,
+// leaving the marker plain (gh's `gh auth status` does the same with its
+// active-account `*`).
+func addOwnerRow(tp tableprinter.TablePrinter, marked bool, owner string, loc int, share, cru float64, isYou, isTeamYou, color bool) {
+	marker := "  "
+	if marked {
+		marker = "* "
 	}
-	fmt.Fprintf(w, "    (unowned)\n")
-	fmt.Fprintf(w, "      %-19s%d\n", "Owned LOC:", unownedLOC)
-	fmt.Fprintf(w, "      %-19s%.3f\n", "Ownership factor:", share)
-	fmt.Fprintf(w, "      %-19s%s\n", "Requested CRU:", "(not attributed)")
+	// Color only the name; marker stays plain so it never looks "off".
+	var cell string
+	switch {
+	case isYou && color:
+		cell = marker + colorBoldCyan(owner)
+	case isTeamYou && color:
+		cell = marker + colorBold(owner)
+	default:
+		cell = marker + owner
+	}
+	tp.AddField(cell)
+	tp.AddField(fmt.Sprintf("%d", loc), tableprinter.WithPadding(padLeft))
+	tp.AddField(fmt.Sprintf("%.3f", share), tableprinter.WithPadding(padLeft))
+	tp.AddField(fmt.Sprintf("%.3f", cru), tableprinter.WithPadding(padLeft))
+	tp.EndRow()
 }
 
 func makeIdentitySet(ids []string) map[string]bool {
@@ -122,69 +215,25 @@ func makeIdentitySet(ids []string) map[string]bool {
 	return m
 }
 
-// displayOwner strips the leading "@" from CODEOWNERS strings for display
-// (CODEOWNERS always starts owner strings with "@"; the symbol carries no
-// info). The data layer keeps the canonical form.
+// displayOwner strips the leading "@" from CODEOWNERS strings for display.
 func displayOwner(s string) string {
 	return strings.TrimPrefix(s, "@")
 }
 
-// Script writes tab-separated key:\tvalue rows, gh-style. Designed for
-// pipelines: `gh cru 123 | grep ^normal_cru:`.
-//
-// Multi-PR runs emit a blank line between PRs.
-func Script(w io.Writer, repo string, s score.PRScore) {
-	pr := s.PR
-	rows := [][2]string{
-		{"repo", repo},
-		{"number", fmt.Sprintf("%d", pr.Number)},
-		{"title", pr.Title},
-		{"author", pr.Author},
-		{"state", pr.State},
-		{"additions", fmt.Sprintf("%d", pr.Additions)},
-		{"deletions", fmt.Sprintf("%d", pr.Deletions)},
-		{"loc", fmt.Sprintf("%d", s.LOC)},
-		{"files", fmt.Sprintf("%d", pr.Files)},
-		{"size_label", string(s.Bucket)},
-		{"size_factor", fmt.Sprintf("%.6f", s.SizeFactor)},
-		{"risk_label", riskLabel(s.Risk)},
-		{"risk_factor", fmt.Sprintf("%.6f", s.Risk)},
-		{"normal_cru", fmt.Sprintf("%.6f", s.CRU())},
-		{"total_cru", fmt.Sprintf("%.6f", s.AuthorCRU())},
-		{"my_login", s.MyLogin},
-		{"my_owned_loc", fmt.Sprintf("%d", s.MyOwnedLOC)},
-		{"my_ownership_factor", fmt.Sprintf("%.6f", s.MyShare)},
-		{"my_requested_cru", fmt.Sprintf("%.6f", s.MyCRU)},
-		{"has_codeowners", fmt.Sprintf("%t", s.HasCodeowners)},
-	}
-	for _, kv := range rows {
-		fmt.Fprintf(w, "%s:\t%s\n", kv[0], kv[1])
-	}
-	if s.HasCodeowners {
-		mySet := makeIdentitySet(s.MyIdentities)
-		for _, o := range s.SortedOwners() {
-			isMine := mySet[strings.ToLower(o.Owner)]
-			fmt.Fprintf(w, "owner:\t%s\t%d\t%.6f\t%.6f\t%t\n",
-				o.Owner, o.OwnedLOC, o.Share, o.Score, isMine)
-		}
-	}
-}
-
-// JSON writes one indented JSON object per call (NDJSON style for batch
-// runs is opt-in via a `--compact` flag in the future).
+// JSON writes one indented JSON object per call.
 func JSON(w io.Writer, repo string, s score.PRScore) error {
 	type ownerJSON struct {
-		Owner            string  `json:"owner"`
-		OwnedLOC         int     `json:"owned_loc"`
-		OwnershipFactor  float64 `json:"ownership_factor"`
-		RequestedCRU     float64 `json:"requested_cru"`
-		IsYou            bool    `json:"is_you"`
+		Owner           string  `json:"owner"`
+		OwnedLOC        int     `json:"owned_loc"`
+		OwnershipFactor float64 `json:"ownership_factor"`
+		RequestedCRU    float64 `json:"requested_cru"`
+		IsYou           bool    `json:"is_you"`
 	}
 	type youJSON struct {
-		Login            string  `json:"login"`
-		OwnedLOC         int     `json:"owned_loc"`
-		OwnershipFactor  float64 `json:"ownership_factor"`
-		RequestedCRU     float64 `json:"requested_cru"`
+		Login           string  `json:"login"`
+		OwnedLOC        int     `json:"owned_loc"`
+		OwnershipFactor float64 `json:"ownership_factor"`
+		RequestedCRU    float64 `json:"requested_cru"`
 	}
 	type out struct {
 		Repo          string      `json:"repo"`
@@ -200,9 +249,9 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		SizeFactor    float64     `json:"size_factor"`
 		RiskLabel     string      `json:"risk_label"`
 		RiskFactor    float64     `json:"risk_factor"`
-		NormalCRU     float64     `json:"normal_cru"`     // size × risk
-		TotalCRU      float64     `json:"total_cru"`      // Σ per-owner; review burden
-		You           *youJSON    `json:"you,omitempty"`  // supplemental user row
+		NormalCRU     float64     `json:"normal_cru"` // size × risk
+		TotalCRU      float64     `json:"total_cru"`  // Σ per-owner; review burden
+		You           *youJSON    `json:"you,omitempty"`
 		MyIdentities  []string    `json:"my_identities,omitempty"`
 		HasCodeowners bool        `json:"has_codeowners"`
 		Owners        []ownerJSON `json:"owners"`
