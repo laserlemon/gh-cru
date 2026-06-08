@@ -5,15 +5,19 @@
 //
 // Layout under base directory (defaults to os.UserCacheDir()/gh-cru):
 //
-//	codeowners/<owner>/<repo>/<etag>.codeowners
+//	codeowners/<owner>/<repo>/<ref>/<etag>.codeowners
 //
-// One file per body, keyed by HTTP ETag. No pointer file, no metadata —
-// the body file IS the cache entry. The resolver always issues a HEAD
-// (up to 3 paths, one per standard CODEOWNERS location) to learn the
-// current ETag, then asks the cache "do you have a body for this?".
-// A HEAD that reveals a known ETag short-circuits the 2.5MB GET; an
-// unknown ETag triggers a cold fetch + save. This also gracefully handles
-// upstream rollbacks: same ETag → same body, even from old history.
+// One file per body, keyed by (ref, ETag). The ref segment partitions
+// the cache cleanly by git ref (commit SHA or branch name) — different
+// refs that happen to share a CODEOWNERS body still get their own entry,
+// which keeps the on-disk layout self-describing and rules out cross-ref
+// collisions. The resolver always issues a HEAD (up to 3 paths, one per
+// standard CODEOWNERS location) to learn the current ETag at that ref,
+// then asks the cache "do you have a body for this?". A HEAD that
+// reveals a known ETag short-circuits the 2.5MB GET; an unknown ETag
+// triggers a cold fetch + save. This also gracefully handles upstream
+// rollbacks: same ETag at the same ref → same body, even from old
+// history.
 package cache
 
 import (
@@ -45,36 +49,51 @@ func New(base string) (*Cache, error) {
 // Base returns the cache root for debugging / inspection.
 func (c *Cache) Base() string { return c.base }
 
-// HasBody reports whether a body file exists for the given ETag.
-func (c *Cache) HasBody(owner, repo, etag string) bool {
-	_, err := os.Stat(c.bodyPath(owner, repo, etag))
+// HasBody reports whether a body file exists for the given (ref, ETag).
+func (c *Cache) HasBody(owner, repo, ref, etag string) bool {
+	_, err := os.Stat(c.bodyPath(owner, repo, ref, etag))
 	return err == nil
 }
 
-// ReadBody returns the cached body for an ETag.
-func (c *Cache) ReadBody(owner, repo, etag string) ([]byte, error) {
-	return os.ReadFile(c.bodyPath(owner, repo, etag))
+// ReadBody returns the cached body for a (ref, ETag) pair.
+func (c *Cache) ReadBody(owner, repo, ref, etag string) ([]byte, error) {
+	return os.ReadFile(c.bodyPath(owner, repo, ref, etag))
 }
 
 // SaveBody writes the body atomically. Safe to call concurrently for the
-// same ETag (writers will race but produce identical content).
-func (c *Cache) SaveBody(owner, repo, etag string, body []byte) error {
+// same (ref, ETag); writers will race but produce identical content.
+func (c *Cache) SaveBody(owner, repo, ref, etag string, body []byte) error {
 	if etag == "" {
 		return fmt.Errorf("SaveBody: empty ETag")
 	}
-	dir := c.repoDir(owner, repo)
+	dir := c.refDir(owner, repo, ref)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
-	return writeAtomic(c.bodyPath(owner, repo, etag), body)
+	return writeAtomic(c.bodyPath(owner, repo, ref, etag), body)
 }
 
-func (c *Cache) repoDir(owner, repo string) string {
-	return filepath.Join(c.base, "codeowners", owner, repo)
+func (c *Cache) refDir(owner, repo, ref string) string {
+	return filepath.Join(c.base, "codeowners", owner, repo, refKey(ref))
 }
 
-func (c *Cache) bodyPath(owner, repo, etag string) string {
-	return filepath.Join(c.repoDir(owner, repo), etagFileKey(etag)+".codeowners")
+func (c *Cache) bodyPath(owner, repo, ref, etag string) string {
+	return filepath.Join(c.refDir(owner, repo, ref), etagFileKey(etag)+".codeowners")
+}
+
+// refKey sanitizes a git ref (commit SHA or branch name) into a single
+// filesystem-safe path segment. SHAs pass through unchanged; branch names
+// have slashes and other separators normalized so e.g. "release/v2" stays
+// inside one directory level.
+var refSanitize = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
+
+func refKey(ref string) string {
+	s := strings.TrimSpace(ref)
+	if s == "" {
+		return "default"
+	}
+	s = refSanitize.ReplaceAllString(s, "_")
+	return s
 }
 
 // etagFileKey derives a filesystem-safe filename component from a raw

@@ -133,7 +133,7 @@ func scoreOne(client *ghc.Client, ref prref.Ref, myLogin string, myIdentities []
 		if err != nil {
 			return err
 		}
-		owners, _, err = client.FetchCodeowners(ref.Owner, ref.Repo)
+		owners, _, err = client.FetchCodeowners(ref.Owner, ref.Repo, pr.CodeownersRef())
 		if err != nil {
 			return err
 		}

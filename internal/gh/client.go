@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -64,20 +66,45 @@ func NewClient() (*Client, error) {
 
 // PR is the slice of a pull request we care about for scoring.
 type PR struct {
-	Number    int
-	Title     string
-	Author    string
-	State     string
-	Additions int
-	Deletions int
-	Files     int
-	Labels    []string
-	HeadSHA   string
-	BaseRef   string
+	Number         int
+	Title          string
+	Author         string
+	State          string
+	Additions      int
+	Deletions      int
+	Files          int
+	Labels         []string
+	HeadSHA        string
+	BaseRef        string
+	Merged         bool
+	MergeCommitSHA string
 }
 
 // LOC is the standard size measure: additions + deletions.
 func (p PR) LOC() int { return p.Additions + p.Deletions }
+
+// CodeownersRef returns the git ref at which CODEOWNERS should be evaluated
+// for scoring this PR. The semantics are deliberately stable-historical:
+//
+//   - Merged PRs use merge_commit_sha. CODEOWNERS at that commit is frozen
+//     forever, so re-scoring the same PR tomorrow yields the same answer.
+//   - Open PRs use the base branch name, which resolves live to the branch's
+//     current HEAD. Matches what GitHub itself evaluates for review-request
+//     gating today; may shift if owners change before the PR merges, which
+//     is correct for "what does it cost to review this NOW".
+//   - Closed-unmerged PRs have no merge commit, so we use the base branch
+//     name like open. Re-scoring may drift but the PR is academic anyway.
+//
+// Returns the empty string only if we somehow have nothing to point at
+// (no base ref, not merged); callers should treat that as "fall back to
+// default branch" by passing it through to the contents API which will
+// resolve unset ref to default-branch HEAD.
+func (p PR) CodeownersRef() string {
+	if p.Merged && p.MergeCommitSHA != "" {
+		return p.MergeCommitSHA
+	}
+	return p.BaseRef
+}
 
 // File is one changed file in a PR with its delta size.
 type File struct {
@@ -165,13 +192,15 @@ func (c *Client) AuthIdentities() (login string, identities []string, teamsOK bo
 func (c *Client) FetchPR(ref prref.Ref) (PR, error) {
 	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d", ref.Owner, ref.Repo, ref.Number)
 	var raw struct {
-		Number    int    `json:"number"`
-		Title     string `json:"title"`
-		State     string `json:"state"`
-		Additions int    `json:"additions"`
-		Deletions int    `json:"deletions"`
-		Files     int    `json:"changed_files"`
-		User      struct {
+		Number         int    `json:"number"`
+		Title          string `json:"title"`
+		State          string `json:"state"`
+		Additions      int    `json:"additions"`
+		Deletions      int    `json:"deletions"`
+		Files          int    `json:"changed_files"`
+		Merged         bool   `json:"merged"`
+		MergeCommitSHA string `json:"merge_commit_sha"`
+		User           struct {
 			Login string `json:"login"`
 		} `json:"user"`
 		Labels []struct {
@@ -193,16 +222,18 @@ func (c *Client) FetchPR(ref prref.Ref) (PR, error) {
 		labels = append(labels, l.Name)
 	}
 	return PR{
-		Number:    raw.Number,
-		Title:     raw.Title,
-		Author:    raw.User.Login,
-		State:     raw.State,
-		Additions: raw.Additions,
-		Deletions: raw.Deletions,
-		Files:     raw.Files,
-		Labels:    labels,
-		HeadSHA:   raw.Head.SHA,
-		BaseRef:   raw.Base.Ref,
+		Number:         raw.Number,
+		Title:          raw.Title,
+		Author:         raw.User.Login,
+		State:          raw.State,
+		Additions:      raw.Additions,
+		Deletions:      raw.Deletions,
+		Files:          raw.Files,
+		Labels:         labels,
+		HeadSHA:        raw.Head.SHA,
+		BaseRef:        raw.Base.Ref,
+		Merged:         raw.Merged,
+		MergeCommitSHA: raw.MergeCommitSHA,
 	}, nil
 }
 
@@ -235,20 +266,21 @@ func (c *Client) FetchPRFiles(ref prref.Ref) ([]File, error) {
 	return files, nil
 }
 
-// FetchCodeowners returns the parsed CODEOWNERS ruleset for the repo.
-// Resolution priority:
+// FetchCodeowners returns the parsed CODEOWNERS ruleset for the repo at
+// the given git ref (commit SHA or branch name). For PR scoring callers,
+// pass pr.CodeownersRef() — that returns merge_commit_sha for merged PRs
+// (stable historical evaluation) and the base branch name for open PRs
+// (live evaluation, matching GitHub's own behavior).
 //
-//  1. Local working tree, if the target repo == the current git repo.
-//     Uncached — the file may include unmerged edits to ownership.
-//  2. In-process cache from earlier PR(s) this run.
-//  3. On-disk cache pointer, if fresh (< DefaultTTL).
-//  4. On-disk cache pointer w/ conditional GET (If-None-Match), if present.
-//  5. Cold fetch from the contents API.
+// An empty ref resolves to the repo's default-branch HEAD on the server
+// side. That is rarely what you want for PR scoring; the gh-cru caller
+// always has either a merge SHA or a base branch name to pass.
 //
 // Returns (nil, false, nil) when the repo has no CODEOWNERS file in any
-// standard location. Returns (nil, false, err) for actual API failures.
-func (c *Client) FetchCodeowners(owner, repo string) (codeowners.Ruleset, bool, error) {
-	rs, _, ok, err := c.fetchCodeownersWithSource(owner, repo)
+// standard location at that ref. Returns (nil, false, err) for actual
+// API failures.
+func (c *Client) FetchCodeowners(owner, repo, ref string) (codeowners.Ruleset, bool, error) {
+	rs, _, ok, err := c.fetchCodeownersWithSource(owner, repo, ref)
 	return rs, ok, err
 }
 
@@ -257,17 +289,20 @@ func (c *Client) FetchCodeowners(owner, repo string) (codeowners.Ruleset, bool, 
 //
 // Resolution priority:
 //
-//  1. In-process cache (this CLI run).
-//  2. Local working tree, if target repo == cwd repo (uncached: may
-//     contain unmerged edits to ownership).
+//  1. In-process cache keyed by owner/repo@ref (this CLI run).
+//  2. Local working tree, ONLY when target repo == cwd repo AND ref looks
+//     like a branch name (not a SHA) that matches the current branch.
+//     Merged-PR scoring (which uses merge_commit_sha) never short-circuits
+//     to local — we need the historical file at that exact commit.
 //  3. Per CODEOWNERS path (.github/CODEOWNERS, CODEOWNERS, docs/CODEOWNERS):
-//     HEAD to learn current ETag. If the disk cache already has a body
-//     for that ETag, use it (browser-style hit; handles rollbacks too).
-//     Otherwise GET the body and save it.
-//  4. All three HEADs 404 → repo has no CODEOWNERS, mark in-process so
-//     we don't re-probe within this run.
-func (c *Client) fetchCodeownersWithSource(owner, repo string) (codeowners.Ruleset, string, bool, error) {
-	key := owner + "/" + repo
+//     HEAD to learn current ETag at ?ref=<ref>. If the disk cache already
+//     has a body for that ETag, use it (browser-style hit; handles
+//     rollbacks and shared-history hits across refs for free).
+//     Otherwise GET the body and save it under <ref>/<etag>.
+//  4. All three HEADs 404 → repo has no CODEOWNERS at this ref, mark
+//     in-process so we don't re-probe within this run.
+func (c *Client) fetchCodeownersWithSource(owner, repo, ref string) (codeowners.Ruleset, string, bool, error) {
+	key := owner + "/" + repo + "@" + ref
 
 	// 1. In-process cache (covers batches and the local-file path).
 	c.mu.Lock()
@@ -281,18 +316,24 @@ func (c *Client) fetchCodeownersWithSource(owner, repo string) (codeowners.Rules
 	}
 	c.mu.Unlock()
 
-	// 2. Local working-tree file when target repo == cwd repo.
-	if local, err := TryLocalCodeowners(owner, repo); err == nil && local.Found {
-		rs, perr := codeowners.ParseFile(bytes.NewReader(local.Body))
-		if perr != nil {
-			return nil, "", false, fmt.Errorf("parse local %s: %w", local.Path, perr)
+	// 2. Local working-tree file when target repo == cwd repo AND the
+	// caller is asking about the current branch (open-PR case, not a
+	// merged-PR scoring against a frozen SHA).
+	if isLikelyBranchName(ref) {
+		if local, err := TryLocalCodeowners(owner, repo); err == nil && local.Found {
+			if currentBranch, berr := currentGitBranch(); berr == nil && currentBranch == ref {
+				rs, perr := codeowners.ParseFile(bytes.NewReader(local.Body))
+				if perr != nil {
+					return nil, "", false, fmt.Errorf("parse local %s: %w", local.Path, perr)
+				}
+				c.rememberOwners(key, rs, "local")
+				return rs, "local", true, nil
+			}
 		}
-		c.rememberOwners(key, rs, "local")
-		return rs, "local", true, nil
 	}
 
 	// 3. HEAD-then-(cache-or-GET) walk of the standard paths.
-	body, source, err := c.resolveRemote(owner, repo)
+	body, source, err := c.resolveRemote(owner, repo, ref)
 	if err != nil {
 		return nil, "", false, err
 	}
@@ -304,7 +345,7 @@ func (c *Client) fetchCodeownersWithSource(owner, repo string) (codeowners.Rules
 	}
 	rs, err := codeowners.ParseFile(bytes.NewReader(body))
 	if err != nil {
-		return nil, "", false, fmt.Errorf("parse CODEOWNERS for %s/%s: %w", owner, repo, err)
+		return nil, "", false, fmt.Errorf("parse CODEOWNERS for %s/%s@%s: %w", owner, repo, ref, err)
 	}
 	c.rememberOwners(key, rs, source)
 	return rs, source, true, nil
@@ -318,13 +359,13 @@ func (c *Client) rememberOwners(key string, rs codeowners.Ruleset, source string
 	c.mu.Unlock()
 }
 
-// resolveRemote walks the standard CODEOWNERS paths in priority order.
-// For each path, HEAD reveals the current ETag; if the cache already has
-// a body for that ETag, we use it. Otherwise GET + save. Returns nil body
-// (no error) when all three paths 404.
-func (c *Client) resolveRemote(owner, repo string) ([]byte, string, error) {
+// resolveRemote walks the standard CODEOWNERS paths in priority order at
+// the given ref. For each path, HEAD reveals the current ETag; if the
+// cache already has a body for that ETag, we use it. Otherwise GET + save.
+// Returns nil body (no error) when all three paths 404 at this ref.
+func (c *Client) resolveRemote(owner, repo, ref string) ([]byte, string, error) {
 	for _, path := range []string{".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"} {
-		etag, status, err := c.headCodeowners(owner, repo, path)
+		etag, status, err := c.headCodeowners(owner, repo, path, ref)
 		if err != nil {
 			return nil, "", err
 		}
@@ -336,8 +377,8 @@ func (c *Client) resolveRemote(owner, repo string) ([]byte, string, error) {
 		}
 
 		// Browser-style cache hit: known ETag → known body.
-		if c.disk != nil && c.disk.HasBody(owner, repo, etag) {
-			body, rerr := c.disk.ReadBody(owner, repo, etag)
+		if c.disk != nil && c.disk.HasBody(owner, repo, ref, etag) {
+			body, rerr := c.disk.ReadBody(owner, repo, ref, etag)
 			if rerr == nil {
 				return body, "cache", nil
 			}
@@ -345,7 +386,7 @@ func (c *Client) resolveRemote(owner, repo string) ([]byte, string, error) {
 		}
 
 		// Unknown ETag: fetch + cache.
-		body, _, err := c.getCodeownersBody(owner, repo, path)
+		body, _, err := c.getCodeownersBody(owner, repo, path, ref)
 		if err != nil {
 			return nil, "", err
 		}
@@ -353,18 +394,19 @@ func (c *Client) resolveRemote(owner, repo string) ([]byte, string, error) {
 			continue
 		}
 		if c.disk != nil {
-			_ = c.disk.SaveBody(owner, repo, etag, body)
+			_ = c.disk.SaveBody(owner, repo, ref, etag, body)
 		}
 		return body, "fresh", nil
 	}
 	return nil, "", nil
 }
 
-// getCodeownersBody fetches the body for one path. Returns (nil, "", nil)
-// if the path doesn't exist (404). Blob SHA is returned for callers that
-// want it, but the cache doesn't track it.
-func (c *Client) getCodeownersBody(owner, repo, path string) ([]byte, string, error) {
-	endpoint := fmt.Sprintf("repos/%s/%s/contents/%s", owner, repo, path)
+// getCodeownersBody fetches the body for one path at the given ref.
+// Returns (nil, "", nil) if the path doesn't exist at that ref (404).
+// Blob SHA is returned for callers that want it, but the cache doesn't
+// track it.
+func (c *Client) getCodeownersBody(owner, repo, path, ref string) ([]byte, string, error) {
+	endpoint := contentsEndpoint(owner, repo, path, ref)
 	resp, err := c.rest.Request(http.MethodGet, endpoint, nil)
 	if err != nil {
 		if isNotFound(err) {
@@ -380,13 +422,13 @@ func (c *Client) getCodeownersBody(owner, repo, path string) ([]byte, string, er
 	return body, blobSHA, nil
 }
 
-// headCodeowners issues a HEAD against the contents API for one path.
-// Returns ETag + status. We use HEAD (not a conditional GET with
-// If-None-Match) because the gh REST client can't set custom headers.
-// HEAD is a no-body request against a stock GET endpoint and works
-// through the standard client.
-func (c *Client) headCodeowners(owner, repo, path string) (string, int, error) {
-	endpoint := fmt.Sprintf("repos/%s/%s/contents/%s", owner, repo, path)
+// headCodeowners issues a HEAD against the contents API for one path at
+// the given ref. Returns ETag + status. We use HEAD (not a conditional
+// GET with If-None-Match) because the gh REST client can't set custom
+// headers. HEAD is a no-body request against a stock GET endpoint and
+// works through the standard client.
+func (c *Client) headCodeowners(owner, repo, path, ref string) (string, int, error) {
+	endpoint := contentsEndpoint(owner, repo, path, ref)
 	resp, err := c.rest.Request(http.MethodHead, endpoint, nil)
 	if err != nil {
 		if isNotFound(err) {
@@ -396,6 +438,68 @@ func (c *Client) headCodeowners(owner, repo, path string) (string, int, error) {
 	}
 	defer resp.Body.Close()
 	return resp.Header.Get("ETag"), resp.StatusCode, nil
+}
+
+// contentsEndpoint builds the contents API URL with optional ?ref=. We
+// keep the ref as-passed (branch name or SHA); GitHub accepts both.
+func contentsEndpoint(owner, repo, path, ref string) string {
+	endpoint := fmt.Sprintf("repos/%s/%s/contents/%s", owner, repo, path)
+	if ref != "" {
+		endpoint += "?ref=" + ref
+	}
+	return endpoint
+}
+
+// isLikelyBranchName returns true when ref looks like a human branch name
+// rather than a full commit SHA. Used to gate the local-CODEOWNERS
+// short-circuit: we only want to short-circuit when the caller is asking
+// about a branch we might have checked out, not a frozen SHA.
+//
+// Heuristic: anything that's not a 40-char hex string is treated as a
+// branch name. Short SHAs (7-12 hex chars) are theoretically ambiguous
+// but PR base.ref is always a full branch name, never a SHA, so this is
+// safe for our callers.
+func isLikelyBranchName(ref string) bool {
+	if len(ref) != 40 {
+		return true
+	}
+	for _, r := range ref {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return true
+		}
+	}
+	return false
+}
+
+// currentGitBranch returns the name of the current branch from HEAD.
+// Returns "" + error in detached-HEAD state or outside a repo.
+func currentGitBranch() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	root := wd
+	for {
+		if fi, err := os.Stat(filepath.Join(root, ".git")); err == nil && (fi.IsDir() || fi.Mode().IsRegular()) {
+			break
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			return "", fmt.Errorf("not in a git repo")
+		}
+		root = parent
+	}
+	headBytes, err := os.ReadFile(filepath.Join(root, ".git", "HEAD"))
+	if err != nil {
+		return "", err
+	}
+	head := strings.TrimSpace(string(headBytes))
+	// "ref: refs/heads/<branch>" on a branch; bare SHA when detached.
+	const prefix = "ref: refs/heads/"
+	if strings.HasPrefix(head, prefix) {
+		return strings.TrimPrefix(head, prefix), nil
+	}
+	return "", fmt.Errorf("detached HEAD")
 }
 
 // decodeContentsResponse parses a GitHub contents API JSON body and returns
