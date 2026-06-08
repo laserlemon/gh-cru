@@ -43,19 +43,18 @@ var (
 	colorBold     = ansi.ColorFunc("default+b")
 	colorBoldCyan = ansi.ColorFunc("cyan+b")
 
-	// Size-bucket colors, matched to github/github's size/* PR labels so
-	// the ramp is visually familiar to anyone reviewing there. ANSI 256
-	// foreground codes; "default+d" or solid colors only — no bg tints
-	// (terminals can't fake the translucent fill the GitHub UI uses).
-	colorSizeXS = ansi.ColorFunc("42")  // bright green
-	colorSizeS  = ansi.ColorFunc("151") // sage
-	colorSizeM  = ansi.ColorFunc("185") // olive yellow
-	colorSizeL  = ansi.ColorFunc("209") // coral
-	colorSizeXL = ansi.ColorFunc("218") // pink
+	// Size-bucket colors, matched to github/github's size/* PR labels
+	// (lightly darkened so they hold up on light-mode terminals too).
+	// Bold so the values stand out from the gray metadata labels.
+	colorSizeXS = ansi.ColorFunc("28+b")  // dark green
+	colorSizeS  = ansi.ColorFunc("106+b") // olive lime
+	colorSizeM  = ansi.ColorFunc("178+b") // dark mustard
+	colorSizeL  = ansi.ColorFunc("166+b") // burnt orange
+	colorSizeXL = ansi.ColorFunc("124+b") // deep red
 
 	// Risk colors, matched to github/github's risk:* PR labels.
-	colorRiskLow  = ansi.ColorFunc("80")  // teal
-	colorRiskHigh = ansi.ColorFunc("217") // salmon
+	colorRiskLow  = ansi.ColorFunc("30+b") // dark teal
+	colorRiskHigh = ansi.ColorFunc("88+b") // blood red
 
 	// Heading palette for multi-PR mode. Hashed by repo so all PRs from
 	// one repo share a color (visual grouping when running batches via
