@@ -55,7 +55,7 @@ func closeTo(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 func TestComputeNoCodeowners(t *testing.T) {
 	p := pr(100)
 	files := []ghc.File{file("README.md", 100)}
-	s := Compute(p, files, nil, "", "", nil)
+	s := Compute(p, files, nil, nil, nil, "", nil)
 
 	if s.HasCodeowners {
 		t.Errorf("HasCodeowners = true, want false")
@@ -90,7 +90,7 @@ func TestComputeCodeownersNoMatch(t *testing.T) {
 	files := []ghc.File{file("docs/random.md", 50)}
 	owners := ownersFrom(t, "*.go @acme/eng\n") // no rule matches *.md
 
-	s := Compute(p, files, owners, "", "", nil)
+	s := Compute(p, files, owners, nil, nil, "", nil)
 
 	if !s.HasCodeowners {
 		t.Errorf("HasCodeowners = false, want true")
@@ -113,7 +113,7 @@ func TestComputeFullCoverage(t *testing.T) {
 	files := []ghc.File{file("main.go", 80)}
 	owners := ownersFrom(t, "*.go @acme/eng\n")
 
-	s := Compute(p, files, owners, "", "", nil)
+	s := Compute(p, files, owners, nil, nil, "", nil)
 
 	if len(s.OwnershipMap) != 1 {
 		t.Fatalf("OwnershipMap size = %d, want 1 (single owner, no unowned)", len(s.OwnershipMap))
@@ -137,7 +137,7 @@ func TestComputePartialCoverage(t *testing.T) {
 	}
 	owners := ownersFrom(t, "*.go @acme/eng\n")
 
-	s := Compute(p, files, owners, "", "", nil)
+	s := Compute(p, files, owners, nil, nil, "", nil)
 
 	if len(s.OwnershipMap) != 2 {
 		t.Fatalf("OwnershipMap size = %d, want 2 (eng + unowned)", len(s.OwnershipMap))
@@ -174,7 +174,7 @@ func TestComputeOverlap(t *testing.T) {
 	files := []ghc.File{file("api/foo.go", 50)}
 	owners := ownersFrom(t, "*.go @acme/eng @acme/api\n")
 
-	s := Compute(p, files, owners, "", "", nil)
+	s := Compute(p, files, owners, nil, nil, "", nil)
 
 	if len(s.OwnershipMap) != 2 {
 		t.Fatalf("OwnershipMap size = %d, want 2 (eng + api, both 100%%)", len(s.OwnershipMap))
@@ -203,7 +203,7 @@ func TestComputeMyCRUDirect(t *testing.T) {
 	}
 	owners := ownersFrom(t, "a.go @laserlemon\nb.go @acme/eng\n")
 
-	s := Compute(p, files, owners, "", "laserlemon", []string{"@laserlemon"})
+	s := Compute(p, files, owners, nil, nil, "laserlemon", []string{"@laserlemon"})
 
 	if s.MyOwnedLOC != 40 {
 		t.Errorf("MyOwnedLOC = %d, want 40", s.MyOwnedLOC)
@@ -211,8 +211,8 @@ func TestComputeMyCRUDirect(t *testing.T) {
 	if !closeTo(s.MyShare, 0.4) {
 		t.Errorf("MyShare = %v, want 0.4", s.MyShare)
 	}
-	if !closeTo(s.MyCRU, cru.SizeFactor(100)*0.4) {
-		t.Errorf("MyCRU = %v, want %v", s.MyCRU, cru.SizeFactor(100)*0.4)
+	if !closeTo(s.MyCRU, cru.Calculate(100, 0.4, cru.RiskLow)) {
+		t.Errorf("MyCRU = %v, want %v", s.MyCRU, cru.Calculate(100, 0.4, cru.RiskLow))
 	}
 }
 
@@ -223,7 +223,7 @@ func TestComputeMyCRUTeam(t *testing.T) {
 	files := []ghc.File{file("a.go", 100)}
 	owners := ownersFrom(t, "*.go @acme/big-orca\n")
 
-	s := Compute(p, files, owners, "", "laserlemon",
+	s := Compute(p, files, owners, nil, nil, "laserlemon",
 		[]string{"@laserlemon", "@acme/big-orca"})
 
 	if s.MyOwnedLOC != 100 {
@@ -241,7 +241,7 @@ func TestComputeMyCRUDedup(t *testing.T) {
 	files := []ghc.File{file("a.go", 100)}
 	owners := ownersFrom(t, "*.go @laserlemon @acme/big-orca\n")
 
-	s := Compute(p, files, owners, "", "laserlemon",
+	s := Compute(p, files, owners, nil, nil, "laserlemon",
 		[]string{"@laserlemon", "@acme/big-orca"})
 
 	if s.MyOwnedLOC != 100 {
@@ -256,12 +256,12 @@ func TestComputeHighRisk(t *testing.T) {
 	files := []ghc.File{file("a.go", 50)}
 	owners := ownersFrom(t, "*.go @acme/eng\n")
 
-	s := Compute(p, files, owners, "risk:high", "", nil)
+	s := Compute(p, files, owners, []string{"risk:high"}, nil, "", nil)
 
-	if !closeTo(s.Risk, cru.RiskHigh) {
+	if s.Risk != cru.RiskHigh {
 		t.Errorf("Risk = %v, want %v (RiskHigh)", s.Risk, cru.RiskHigh)
 	}
-	wantCRU := cru.SizeFactor(50) * cru.RiskHigh
+	wantCRU := cru.Calculate(50, 1.0, cru.RiskHigh)
 	if !closeTo(s.CRU(), wantCRU) {
 		t.Errorf("CRU = %v, want %v (size × 4)", s.CRU(), wantCRU)
 	}
@@ -274,9 +274,9 @@ func TestComputeRiskLabelCaseInsensitive(t *testing.T) {
 	files := []ghc.File{file("a.go", 50)}
 	owners := ownersFrom(t, "*.go @acme/eng\n")
 
-	s := Compute(p, files, owners, "risk:high", "", nil)
+	s := Compute(p, files, owners, []string{"risk:high"}, nil, "", nil)
 
-	if !closeTo(s.Risk, cru.RiskHigh) {
+	if s.Risk != cru.RiskHigh {
 		t.Errorf("Risk = %v, want %v (case-insensitive match)", s.Risk, cru.RiskHigh)
 	}
 }
@@ -293,7 +293,7 @@ func TestSortedOwnersOrder(t *testing.T) {
 	}
 	owners := ownersFrom(t, "*.go @acme/eng\n")
 
-	s := Compute(p, files, owners, "", "", nil)
+	s := Compute(p, files, owners, nil, nil, "", nil)
 
 	ordered := s.SortedOwners()
 	if len(ordered) != 2 {
@@ -311,8 +311,8 @@ func TestCRUEqualsSizeTimesRisk(t *testing.T) {
 	files := []ghc.File{file("a.go", 50)}
 	owners := ownersFrom(t, "*.go @nobody/important\n")
 
-	s := Compute(p, files, owners, "risk:high", "", nil)
-	want := cru.SizeFactor(50) * cru.RiskHigh
+	s := Compute(p, files, owners, []string{"risk:high"}, nil, "", nil)
+	want := cru.Calculate(50, 1.0, cru.RiskHigh)
 	if !closeTo(s.CRU(), want) {
 		t.Errorf("CRU() = %v, want %v", s.CRU(), want)
 	}
@@ -333,7 +333,7 @@ func TestAuthorCRUEmpty(t *testing.T) {
 func TestComputeZeroLOC(t *testing.T) {
 	p := pr(0)
 	files := []ghc.File{}
-	s := Compute(p, files, nil, "", "", nil)
+	s := Compute(p, files, nil, nil, nil, "", nil)
 
 	if s.LOC != 0 {
 		t.Errorf("LOC = %d, want 0", s.LOC)
@@ -345,5 +345,75 @@ func TestComputeZeroLOC(t *testing.T) {
 	// Should not panic; CRU stays at the bounded floor.
 	if math.IsNaN(s.CRU()) || math.IsInf(s.CRU(), 0) {
 		t.Errorf("CRU at 0 LOC = %v, want finite (bounded floor)", s.CRU())
+	}
+}
+
+func TestHasAnyLabel(t *testing.T) {
+	tests := []struct {
+		name    string
+		labels  []string
+		targets []string
+		want    bool
+	}{
+		{"empty targets", []string{"bug"}, nil, false},
+		{"empty labels", nil, []string{"risk:high"}, false},
+		{"single match", []string{"bug", "risk:high"}, []string{"risk:high"}, true},
+		{"case insensitive", []string{"Risk:High"}, []string{"risk:high"}, true},
+		{"any of many matches", []string{"bug", "danger"}, []string{"risk:high", "danger", "p0"}, true},
+		{"none match", []string{"bug"}, []string{"risk:high", "danger"}, false},
+		{"empty target string skipped", []string{"bug"}, []string{"", "bug"}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasAnyLabel(tc.labels, tc.targets); got != tc.want {
+				t.Errorf("hasAnyLabel(%v, %v) = %v, want %v", tc.labels, tc.targets, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCompute_RiskLabels_MultipleAccepted(t *testing.T) {
+	p := ghc.PR{Number: 1, Additions: 100, Deletions: 50, Labels: []string{"p0"}}
+	files := []ghc.File{{Path: "x.go", Changes: 150}}
+	s := Compute(p, files, nil, []string{"risk:high", "p0", "critical"}, nil, "", nil)
+	if s.Risk != cru.RiskHigh {
+		t.Errorf("expected high risk (any of multi-label set matches), got %v", s.Risk)
+	}
+}
+
+func TestCompute_MediumRisk(t *testing.T) {
+	p := ghc.PR{Number: 1, Additions: 100, Deletions: 50, Labels: []string{"risk:medium"}}
+	files := []ghc.File{{Path: "x.go", Changes: 150}}
+	s := Compute(p, files, nil, []string{"risk:high"}, []string{"risk:medium"}, "", nil)
+	if s.Risk != cru.RiskMedium {
+		t.Errorf("expected medium risk, got %v", s.Risk)
+	}
+}
+
+func TestCompute_HighWinsOverMedium(t *testing.T) {
+	// A PR carrying BOTH labels should be scored at high, not medium.
+	p := ghc.PR{Number: 1, Additions: 100, Deletions: 50, Labels: []string{"risk:medium", "risk:high"}}
+	files := []ghc.File{{Path: "x.go", Changes: 150}}
+	s := Compute(p, files, nil, []string{"risk:high"}, []string{"risk:medium"}, "", nil)
+	if s.Risk != cru.RiskHigh {
+		t.Errorf("high should win over medium; got risk=%v", s.Risk)
+	}
+}
+
+func TestCompute_MediumLabelMultiAccepted(t *testing.T) {
+	p := ghc.PR{Number: 1, Additions: 100, Deletions: 50, Labels: []string{"needs-care"}}
+	files := []ghc.File{{Path: "x.go", Changes: 150}}
+	s := Compute(p, files, nil, nil, []string{"risk:medium", "needs-care", "watch"}, "", nil)
+	if s.Risk != cru.RiskMedium {
+		t.Errorf("expected medium risk via multi-label set, got %v", s.Risk)
+	}
+}
+
+func TestCompute_NoMatchStaysLow(t *testing.T) {
+	p := ghc.PR{Number: 1, Additions: 100, Deletions: 50, Labels: []string{"bug"}}
+	files := []ghc.File{{Path: "x.go", Changes: 150}}
+	s := Compute(p, files, nil, []string{"risk:high"}, []string{"risk:medium"}, "", nil)
+	if s.Risk != cru.RiskLow {
+		t.Errorf("expected low risk (no labels match), got %v", s.Risk)
 	}
 }

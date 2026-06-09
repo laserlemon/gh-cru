@@ -20,7 +20,7 @@ const UnownedOwnerLabel = "unowned"
 //
 // Four distinct CRU numbers are computed; each answers a different question:
 //
-//   - CRU       - owner-agnostic; SizeFactor × Risk. The PR's intrinsic
+//   - CRU       - owner-agnostic; Size × Risk. The PR's intrinsic
 //                 review weight, as if a single reviewer owned every line.
 //                 Default scalar score: "how big a review is this?".
 //   - AuthorCRU - sum across all CODEOWNERS shares PLUS the synthetic
@@ -37,9 +37,8 @@ const UnownedOwnerLabel = "unowned"
 type PRScore struct {
 	PR             ghc.PR
 	LOC            int
-	SizeFactor     float64
-	Bucket         cru.Size
-	Risk           float64
+	Size           cru.Size // factor (float64 value) and bucket label (String()) in one
+	Risk           cru.Risk // tier (low / medium / high), sealed in the cru package
 	HasCodeowners  bool
 	OwnerOrder     []string             // first-seen order while walking PR files
 	OwnershipMap   map[string]Ownership // owner login → ownership info
@@ -63,13 +62,13 @@ type PRScore struct {
 	MyIdentities []string
 	MyOwnedLOC   int     // LOC of files owned by any of my identities (counted once)
 	MyShare      float64 // ownership share for "me": MyOwnedLOC / total LOC, in [0, 1]
-	MyCRU        float64 // SizeFactor × MyShare × Risk
+	MyCRU        float64 // Size × MyShare × Risk
 }
 
-// CRU returns the owner-agnostic CRU: SizeFactor × Risk. This is the
+// CRU returns the owner-agnostic CRU: Size × Risk. This is the
 // "what size review is this?" score - independent of who owns what.
 func (s PRScore) CRU() float64 {
-	return s.SizeFactor * s.Risk
+	return float64(s.Size) * s.Risk.Factor()
 }
 
 // AuthorCRU returns the total review burden the PR places on the team:
@@ -92,7 +91,7 @@ func (s PRScore) AuthorCRU() float64 {
 
 // Ownership is one owner's stake in a PR.
 //
-//	Score = SizeFactor × Share × Risk
+//	Score = Size × Share × Risk
 //
 // where Share is this owner's ownership share (OwnedLOC / total LOC, in
 // [0, 1]). The synthetic "unowned" owner uses the same shape with
@@ -101,32 +100,41 @@ type Ownership struct {
 	Owner    string  // login or @org/team, or UnownedOwnerLabel for the synthetic unowned row
 	OwnedLOC int     // LOC of files this owner is responsible for
 	Share    float64 // ownership share: OwnedLOC / total LOC, in [0, 1]
-	Score    float64 // SizeFactor × Share × Risk
+	Score    float64 // Size × Share × Risk
 }
 
 // Compute builds a PRScore from a fetched PR, its file diffs, and the
 // (optional) CODEOWNERS ruleset. Pass nil ruleset for repos without
 // CODEOWNERS - the result will treat the whole PR as unowned.
 //
+// highRiskLabels and mediumRiskLabels are the sets of label names that
+// trigger the high-risk (4×) and medium-risk (2×) multipliers
+// respectively. Any one matching the PR's labels (case-insensitive)
+// activates that tier. High wins over medium when both match. Pass nil
+// or empty to disable a tier.
+//
 // myLogin is the authenticated user's GitHub @login (no leading @); empty
 // when running without personal scoring. myIdentities, when non-empty, are
 // the CODEOWNERS-compatible identity strings (e.g. ["@laserlemon",
 // "@github/justice-league"]) used to compute MyCRU. Pass nil to skip
 // personal scoring.
-func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel string, myLogin string, myIdentities []string) PRScore {
+func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLabels []string, mediumRiskLabels []string, myLogin string, myIdentities []string) PRScore {
 	risk := cru.RiskLow
-	if hasLabel(pr.Labels, riskLabel) {
+	switch {
+	case hasAnyLabel(pr.Labels, highRiskLabels):
 		risk = cru.RiskHigh
+	case hasAnyLabel(pr.Labels, mediumRiskLabels):
+		risk = cru.RiskMedium
 	}
 
 	loc := pr.LOC()
-	sf := cru.SizeFactor(loc)
+	size := cru.SizeOf(loc)
+	sf := float64(size)
 
 	result := PRScore{
 		PR:            pr,
 		LOC:           loc,
-		SizeFactor:    sf,
-		Bucket:        cru.Bucket(loc),
+		Size:          size,
 		Risk:          risk,
 		HasCodeowners: owners != nil,
 		OwnershipMap:  make(map[string]Ownership),
@@ -149,7 +157,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 			Owner:    UnownedOwnerLabel,
 			OwnedLOC: loc,
 			Share:    float64(loc) / float64(denom),
-			Score:    sf * float64(loc) / float64(denom) * risk,
+			Score:    sf * float64(loc) / float64(denom) * risk.Factor(),
 		}
 		result.OwnerOrder = []string{UnownedOwnerLabel}
 		return result
@@ -209,7 +217,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 			Owner:    owner,
 			OwnedLOC: ownedLOC,
 			Share:    share,
-			Score:    sf * share * risk,
+			Score:    sf * share * risk.Factor(),
 		}
 	}
 
@@ -227,7 +235,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 			Owner:    UnownedOwnerLabel,
 			OwnedLOC: result.UnownedChanges,
 			Share:    share,
-			Score:    sf * share * risk,
+			Score:    sf * share * risk.Factor(),
 		}
 		// Append to owner order so the unowned row renders LAST in the
 		// table (after all real owners).
@@ -237,7 +245,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 	if len(myIdentities) > 0 {
 		result.MyOwnedLOC = myOwnedLOC
 		result.MyShare = float64(myOwnedLOC) / float64(denom)
-		result.MyCRU = sf * result.MyShare * risk
+		result.MyCRU = sf * result.MyShare * risk.Factor()
 	}
 
 	return result
@@ -266,13 +274,20 @@ func (s PRScore) TotalScore() float64 {
 	return s.AuthorCRU()
 }
 
-func hasLabel(labels []string, target string) bool {
-	if target == "" {
+// hasAnyLabel returns true when any target appears in labels
+// (case-insensitive). Empty targets returns false.
+func hasAnyLabel(labels []string, targets []string) bool {
+	if len(targets) == 0 {
 		return false
 	}
-	for _, l := range labels {
-		if strings.EqualFold(l, target) {
-			return true
+	for _, t := range targets {
+		if t == "" {
+			continue
+		}
+		for _, l := range labels {
+			if strings.EqualFold(l, t) {
+				return true
+			}
 		}
 	}
 	return false

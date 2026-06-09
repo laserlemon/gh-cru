@@ -30,7 +30,7 @@ type scenario struct {
 	Repo          string
 	Number        int
 	LOC           int
-	Risk          float64
+	Risk          cru.Risk
 	HasCodeowners bool
 	Owners        []owner
 	UnownedLOC    int
@@ -135,6 +135,17 @@ func main() {
 			},
 		},
 		{
+			Name:          "8b. medium-risk PR (risk factor 2×)",
+			Repo:          "acme/payments",
+			Number:        78,
+			LOC:           42,
+			Risk:          cru.RiskMedium,
+			HasCodeowners: true,
+			Owners: []owner{
+				{Name: "@acme/payments-team", LOC: 42},
+			},
+		},
+		{
 			Name:          "9. extra-small PR (XS bucket, low CRU)",
 			Repo:          "acme/web",
 			Number:        1240,
@@ -218,7 +229,9 @@ func main() {
 }
 
 func buildScore(c scenario) score.PRScore {
-	sf := cru.SizeFactor(c.LOC)
+	size := cru.SizeOf(c.LOC)
+	sf := float64(size)
+	rf := c.Risk.Factor()
 	result := score.PRScore{
 		PR: ghc.PR{
 			Number: c.Number,
@@ -227,8 +240,7 @@ func buildScore(c scenario) score.PRScore {
 			State:  "open",
 		},
 		LOC:           c.LOC,
-		SizeFactor:    sf,
-		Bucket:        cru.Bucket(c.LOC),
+		Size:          size,
 		Risk:          c.Risk,
 		HasCodeowners: c.HasCodeowners,
 		OwnershipMap:  make(map[string]score.Ownership),
@@ -249,7 +261,7 @@ func buildScore(c scenario) score.PRScore {
 			Owner:    score.UnownedOwnerLabel,
 			OwnedLOC: c.LOC,
 			Share:    float64(c.LOC) / float64(denom),
-			Score:    sf * float64(c.LOC) / float64(denom) * c.Risk,
+			Score:    sf * float64(c.LOC) / float64(denom) * rf,
 		}
 		result.OwnerOrder = []string{score.UnownedOwnerLabel}
 		return result
@@ -282,7 +294,7 @@ func buildScore(c scenario) score.PRScore {
 	if len(c.MyIdentities) > 0 {
 		result.MyOwnedLOC = myLOC
 		result.MyShare = float64(myLOC) / float64(denom)
-		result.MyCRU = sf * result.MyShare * c.Risk
+		result.MyCRU = sf * result.MyShare * rf
 	}
 
 	for _, o := range c.Owners {
@@ -291,7 +303,7 @@ func buildScore(c scenario) score.PRScore {
 			Owner:    o.Name,
 			OwnedLOC: o.LOC,
 			Share:    share,
-			Score:    sf * share * c.Risk,
+			Score:    sf * share * rf,
 		}
 		result.OwnerOrder = append(result.OwnerOrder, o.Name)
 	}
@@ -301,7 +313,7 @@ func buildScore(c scenario) score.PRScore {
 			Owner:    score.UnownedOwnerLabel,
 			OwnedLOC: c.UnownedLOC,
 			Share:    share,
-			Score:    sf * share * c.Risk,
+			Score:    sf * share * rf,
 		}
 		result.OwnerOrder = append(result.OwnerOrder, score.UnownedOwnerLabel)
 	}

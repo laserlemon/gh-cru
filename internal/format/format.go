@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/cli/go-gh/v2/pkg/tableprinter"
@@ -53,40 +54,163 @@ var (
 	colorSizeXL = ansi.ColorFunc("124+b") // deep red
 
 	// Risk colors, matched to conventional risk:* PR labels.
-	colorRiskLow  = ansi.ColorFunc("30+b") // dark teal
-	colorRiskHigh = ansi.ColorFunc("88+b") // blood red
+	colorRiskLow    = ansi.ColorFunc("30+b")  // dark teal
+	colorRiskMedium = ansi.ColorFunc("214+b") // amber/orange — between teal and red on the heat axis
+	colorRiskHigh   = ansi.ColorFunc("88+b")  // blood red
 
 	// Heading palette for multi-PR mode. Hashed by repo so all PRs from
 	// one repo share a color (visual grouping when running batches via
 	// `gh pr list | xargs gh cru`); mixing repos differentiates them.
-	// All entries are mid-saturation 256-color codes chosen to stay
-	// out of the way of the size/risk palette below them. Bold so the
-	// heading anchors the eye above each PR's block.
+	// Every entry sits in the 0.10–0.30 WCAG luminance band so the
+	// repo name hits ≥ 3:1 contrast on BOTH dark and light terminals.
+	// 68 colors maximizes the chance two adjacent repos draw distinct
+	// hashes. Bold so the heading anchors the eye above each PR's block.
 	headingPalette = []func(string) string{
-		ansi.ColorFunc("110+b"), // pale blue
-		ansi.ColorFunc("139+b"), // mauve
-		ansi.ColorFunc("144+b"), // beige
-		ansi.ColorFunc("180+b"), // wheat
-		ansi.ColorFunc("103+b"), // periwinkle
-		ansi.ColorFunc("108+b"), // muted green
+		ansi.ColorFunc("25+b"),  // #005faf
+		ansi.ColorFunc("26+b"),  // #005fd7
+		ansi.ColorFunc("27+b"),  // #005fff
+		ansi.ColorFunc("28+b"),  // #008700
+		ansi.ColorFunc("29+b"),  // #00875f
+		ansi.ColorFunc("30+b"),  // #008787
+		ansi.ColorFunc("31+b"),  // #0087af
+		ansi.ColorFunc("32+b"),  // #0087d7
+		ansi.ColorFunc("33+b"),  // #0087ff
+		ansi.ColorFunc("58+b"),  // #5f5f00
+		ansi.ColorFunc("59+b"),  // #5f5f5f
+		ansi.ColorFunc("60+b"),  // #5f5f87
+		ansi.ColorFunc("61+b"),  // #5f5faf
+		ansi.ColorFunc("62+b"),  // #5f5fd7
+		ansi.ColorFunc("63+b"),  // #5f5fff
+		ansi.ColorFunc("64+b"),  // #5f8700
+		ansi.ColorFunc("65+b"),  // #5f875f
+		ansi.ColorFunc("66+b"),  // #5f8787
+		ansi.ColorFunc("67+b"),  // #5f87af
+		ansi.ColorFunc("68+b"),  // #5f87d7
+		ansi.ColorFunc("69+b"),  // #5f87ff
+		ansi.ColorFunc("92+b"),  // #8700d7
+		ansi.ColorFunc("93+b"),  // #8700ff
+		ansi.ColorFunc("94+b"),  // #875f00
+		ansi.ColorFunc("95+b"),  // #875f5f
+		ansi.ColorFunc("96+b"),  // #875f87
+		ansi.ColorFunc("97+b"),  // #875faf
+		ansi.ColorFunc("98+b"),  // #875fd7
+		ansi.ColorFunc("99+b"),  // #875fff
+		ansi.ColorFunc("100+b"), // #878700
+		ansi.ColorFunc("101+b"), // #87875f
+		ansi.ColorFunc("102+b"), // #878787
+		ansi.ColorFunc("103+b"), // #8787af
+		ansi.ColorFunc("104+b"), // #8787d7
+		ansi.ColorFunc("105+b"), // #8787ff
+		ansi.ColorFunc("126+b"), // #af0087
+		ansi.ColorFunc("127+b"), // #af00af
+		ansi.ColorFunc("128+b"), // #af00d7
+		ansi.ColorFunc("129+b"), // #af00ff
+		ansi.ColorFunc("130+b"), // #af5f00
+		ansi.ColorFunc("131+b"), // #af5f5f
+		ansi.ColorFunc("132+b"), // #af5f87
+		ansi.ColorFunc("133+b"), // #af5faf
+		ansi.ColorFunc("134+b"), // #af5fd7
+		ansi.ColorFunc("135+b"), // #af5fff
+		ansi.ColorFunc("136+b"), // #af8700
+		ansi.ColorFunc("137+b"), // #af875f
+		ansi.ColorFunc("138+b"), // #af8787
+		ansi.ColorFunc("139+b"), // #af87af
+		ansi.ColorFunc("160+b"), // #d70000
+		ansi.ColorFunc("161+b"), // #d7005f
+		ansi.ColorFunc("162+b"), // #d70087
+		ansi.ColorFunc("163+b"), // #d700af
+		ansi.ColorFunc("164+b"), // #d700d7
+		ansi.ColorFunc("165+b"), // #d700ff
+		ansi.ColorFunc("166+b"), // #d75f00
+		ansi.ColorFunc("167+b"), // #d75f5f
+		ansi.ColorFunc("168+b"), // #d75f87
+		ansi.ColorFunc("169+b"), // #d75faf
+		ansi.ColorFunc("170+b"), // #d75fd7
+		ansi.ColorFunc("171+b"), // #d75fff
+		ansi.ColorFunc("196+b"), // #ff0000
+		ansi.ColorFunc("197+b"), // #ff005f
+		ansi.ColorFunc("198+b"), // #ff0087
+		ansi.ColorFunc("199+b"), // #ff00af
+		ansi.ColorFunc("200+b"), // #ff00d7
+		ansi.ColorFunc("201+b"), // #ff00ff
+		ansi.ColorFunc("202+b"), // #ff5f00
 	}
 
 	// PR-number palette for the `#N` portion of the heading. Hashed by
 	// PR number so the number gets its own deterministic color, distinct
-	// from the repo palette above so the two pieces are visually
-	// separable when scanning a batch of PRs from the same repo.
-	// Brighter and warmer than the headingPalette to differentiate; still
-	// readable on both dark and light terminals. Also bold for the same
-	// reason as headingPalette.
+	// from the repo palette above. Same 68-color WCAG-safe pool — when
+	// the repo hash and number hash land on the same color it's a rare
+	// collision the brain processes as "same family" without losing
+	// info.
 	prNumberPalette = []func(string) string{
-		ansi.ColorFunc("173+b"), // tan
-		ansi.ColorFunc("215+b"), // peach
-		ansi.ColorFunc("221+b"), // amber
-		ansi.ColorFunc("209+b"), // salmon
-		ansi.ColorFunc("147+b"), // lavender
-		ansi.ColorFunc("114+b"), // pale green
-		ansi.ColorFunc("117+b"), // sky blue
-		ansi.ColorFunc("182+b"), // pink lilac
+		ansi.ColorFunc("25+b"),  // #005faf
+		ansi.ColorFunc("26+b"),  // #005fd7
+		ansi.ColorFunc("27+b"),  // #005fff
+		ansi.ColorFunc("28+b"),  // #008700
+		ansi.ColorFunc("29+b"),  // #00875f
+		ansi.ColorFunc("30+b"),  // #008787
+		ansi.ColorFunc("31+b"),  // #0087af
+		ansi.ColorFunc("32+b"),  // #0087d7
+		ansi.ColorFunc("33+b"),  // #0087ff
+		ansi.ColorFunc("58+b"),  // #5f5f00
+		ansi.ColorFunc("59+b"),  // #5f5f5f
+		ansi.ColorFunc("60+b"),  // #5f5f87
+		ansi.ColorFunc("61+b"),  // #5f5faf
+		ansi.ColorFunc("62+b"),  // #5f5fd7
+		ansi.ColorFunc("63+b"),  // #5f5fff
+		ansi.ColorFunc("64+b"),  // #5f8700
+		ansi.ColorFunc("65+b"),  // #5f875f
+		ansi.ColorFunc("66+b"),  // #5f8787
+		ansi.ColorFunc("67+b"),  // #5f87af
+		ansi.ColorFunc("68+b"),  // #5f87d7
+		ansi.ColorFunc("69+b"),  // #5f87ff
+		ansi.ColorFunc("92+b"),  // #8700d7
+		ansi.ColorFunc("93+b"),  // #8700ff
+		ansi.ColorFunc("94+b"),  // #875f00
+		ansi.ColorFunc("95+b"),  // #875f5f
+		ansi.ColorFunc("96+b"),  // #875f87
+		ansi.ColorFunc("97+b"),  // #875faf
+		ansi.ColorFunc("98+b"),  // #875fd7
+		ansi.ColorFunc("99+b"),  // #875fff
+		ansi.ColorFunc("100+b"), // #878700
+		ansi.ColorFunc("101+b"), // #87875f
+		ansi.ColorFunc("102+b"), // #878787
+		ansi.ColorFunc("103+b"), // #8787af
+		ansi.ColorFunc("104+b"), // #8787d7
+		ansi.ColorFunc("105+b"), // #8787ff
+		ansi.ColorFunc("126+b"), // #af0087
+		ansi.ColorFunc("127+b"), // #af00af
+		ansi.ColorFunc("128+b"), // #af00d7
+		ansi.ColorFunc("129+b"), // #af00ff
+		ansi.ColorFunc("130+b"), // #af5f00
+		ansi.ColorFunc("131+b"), // #af5f5f
+		ansi.ColorFunc("132+b"), // #af5f87
+		ansi.ColorFunc("133+b"), // #af5faf
+		ansi.ColorFunc("134+b"), // #af5fd7
+		ansi.ColorFunc("135+b"), // #af5fff
+		ansi.ColorFunc("136+b"), // #af8700
+		ansi.ColorFunc("137+b"), // #af875f
+		ansi.ColorFunc("138+b"), // #af8787
+		ansi.ColorFunc("139+b"), // #af87af
+		ansi.ColorFunc("160+b"), // #d70000
+		ansi.ColorFunc("161+b"), // #d7005f
+		ansi.ColorFunc("162+b"), // #d70087
+		ansi.ColorFunc("163+b"), // #d700af
+		ansi.ColorFunc("164+b"), // #d700d7
+		ansi.ColorFunc("165+b"), // #d700ff
+		ansi.ColorFunc("166+b"), // #d75f00
+		ansi.ColorFunc("167+b"), // #d75f5f
+		ansi.ColorFunc("168+b"), // #d75f87
+		ansi.ColorFunc("169+b"), // #d75faf
+		ansi.ColorFunc("170+b"), // #d75fd7
+		ansi.ColorFunc("171+b"), // #d75fff
+		ansi.ColorFunc("196+b"), // #ff0000
+		ansi.ColorFunc("197+b"), // #ff005f
+		ansi.ColorFunc("198+b"), // #ff0087
+		ansi.ColorFunc("199+b"), // #ff00af
+		ansi.ColorFunc("200+b"), // #ff00d7
+		ansi.ColorFunc("201+b"), // #ff00ff
+		ansi.ColorFunc("202+b"), // #ff5f00
 	}
 
 	// Table header styling matches gh CLI's iostreams.ColorScheme.TableHeader:
@@ -126,15 +250,21 @@ func sizeColor(text, bucket string, enabled bool) string {
 }
 
 // riskColor returns text colored by risk level (low → teal, high → red).
-// Used for both the risk label ("low"/"high") and the risk factor number.
+// riskColor paints the risk label and risk factor in their tier color.
+// Drives both the human-readable "low/medium/high" string and the
+// numeric multiplier (e.g. "4.000") so the eye reads them as one unit.
 func riskColor(text, level string, enabled bool) string {
 	if !enabled {
 		return text
 	}
-	if level == "high" {
+	switch level {
+	case "high":
 		return colorRiskHigh(text)
+	case "medium":
+		return colorRiskMedium(text)
+	default:
+		return colorRiskLow(text)
 	}
-	return colorRiskLow(text)
 }
 
 func dim(s string, enabled bool) string {
@@ -196,11 +326,11 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	// headers — `label` colorizes after padding so visible-width math
 	// stays correct.
 	fmt.Fprintf(w, "%s %d\n", label("LOC", color), s.LOC)
-	fmt.Fprintf(w, "%s %s\n", label("Size label", color), sizeColor(string(s.Bucket), string(s.Bucket), color))
-	fmt.Fprintf(w, "%s %s\n", label("Size factor", color), sizeColor(fmt.Sprintf("%.3f", s.SizeFactor), string(s.Bucket), color))
-	rl := riskLabel(s.Risk)
+	fmt.Fprintf(w, "%s %s\n", label("Size label", color), sizeColor(s.Size.String(), s.Size.String(), color))
+	fmt.Fprintf(w, "%s %s\n", label("Size factor", color), sizeColor(fmt.Sprintf("%.3f", float64(s.Size)), s.Size.String(), color))
+	rl := s.Risk.String()
 	fmt.Fprintf(w, "%s %s\n", label("Risk label", color), riskColor(rl, rl, color))
-	fmt.Fprintf(w, "%s %s\n", label("Risk factor", color), riskColor(fmt.Sprintf("%.3f", s.Risk), rl, color))
+	fmt.Fprintf(w, "%s %s\n", label("Risk factor", color), riskColor(fmt.Sprintf("%.3f", s.Risk.Factor()), rl, color))
 	fmt.Fprintf(w, "%s %.3f\n", label("Normal CRU", color), s.CRU())
 	fmt.Fprintf(w, "%s %.3f\n", label("Total CRU", color), s.AuthorCRU())
 	if s.MyLogin != "" {
@@ -402,14 +532,22 @@ func displayOwner(s string) string {
 }
 
 // JSON writes one indented JSON object per call.
+//
+// Float values are rounded to 6 decimal places before serialization.
+// Rationale: the underlying math (SizeFactor, ownership shares, CRU)
+// involves Φ-CDF approximations and floating-point division whose tails
+// of `.999999999` and `.000000001` artifacts are noise, not signal.
+// Six places preserves all meaningful precision (PR sizes never need
+// more than ~4 significant digits of factor) and produces output that
+// jq/duckdb/Python downstream can `==`-compare without surprises.
 func JSON(w io.Writer, repo string, s score.PRScore) error {
 	type ownerJSON struct {
-		Owner          string  `json:"owner"`
+		Name           *string `json:"name"`            // null when type=="unowned"
+		Type           string  `json:"type"`            // "user" | "team" | "unowned"
 		OwnedLOC       int     `json:"owned_loc"`
 		OwnershipShare float64 `json:"ownership_share"`
 		RequestedCRU   float64 `json:"requested_cru"`
-		IsYou          bool    `json:"is_you"`
-		IsUnowned      bool    `json:"is_unowned"`
+		IsYou          bool    `json:"is_you"`          // direct @login or team-membership match
 	}
 	type youJSON struct {
 		Login          string  `json:"login"`
@@ -433,23 +571,51 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		RiskFactor    float64     `json:"risk_factor"`
 		NormalCRU     float64     `json:"normal_cru"` // size × risk
 		TotalCRU      float64     `json:"total_cru"`  // Σ per-owner; review burden
-		You           *youJSON    `json:"you,omitempty"`
-		MyIdentities  []string    `json:"my_identities,omitempty"`
-		HasCodeowners bool        `json:"has_codeowners"`
-		Owners        []ownerJSON `json:"owners"`
-		UnownedLOC    int         `json:"unowned_loc"`
+		You          *youJSON    `json:"you,omitempty"`
+		MyIdentities []string    `json:"my_identities,omitempty"`
+		Owners       []ownerJSON `json:"owners"`
+		UnownedLOC   int         `json:"unowned_loc"`
 	}
 	owners := make([]ownerJSON, 0)
 	mySet := makeIdentitySet(s.MyIdentities)
+	myLoginKey := ""
+	if s.MyLogin != "" {
+		myLoginKey = "@" + strings.ToLower(s.MyLogin)
+	}
 	for _, o := range s.SortedOwners() {
 		isUnowned := o.Owner == score.UnownedOwnerLabel
+		ownerKey := strings.ToLower(o.Owner)
+		isYou := !isUnowned && (
+			(myLoginKey != "" && ownerKey == myLoginKey) ||
+				mySet[ownerKey])
+
+		// type: "unowned" for the synthetic row, "team" for slug-style
+		// "@org/team" identifiers, "user" otherwise. CODEOWNERS doesn't
+		// distinguish at the syntactic level, so we use the "/" convention
+		// the same way GitHub's UI does.
+		var ownerType string
+		var name *string
+		switch {
+		case isUnowned:
+			ownerType = "unowned"
+			name = nil
+		default:
+			display := displayOwner(o.Owner)
+			name = &display
+			if strings.Contains(o.Owner, "/") {
+				ownerType = "team"
+			} else {
+				ownerType = "user"
+			}
+		}
+
 		owners = append(owners, ownerJSON{
-			Owner:          o.Owner,
+			Name:           name,
+			Type:           ownerType,
 			OwnedLOC:       o.OwnedLOC,
-			OwnershipShare: o.Share,
-			RequestedCRU:   o.Score,
-			IsYou:          !isUnowned && mySet[strings.ToLower(o.Owner)],
-			IsUnowned:      isUnowned,
+			OwnershipShare: round6(o.Share),
+			RequestedCRU:   round6(o.Score),
+			IsYou:          isYou,
 		})
 	}
 	var you *youJSON
@@ -457,40 +623,45 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		you = &youJSON{
 			Login:          s.MyLogin,
 			OwnedLOC:       s.MyOwnedLOC,
-			OwnershipShare: s.MyShare,
-			RequestedCRU:   s.MyCRU,
+			OwnershipShare: round6(s.MyShare),
+			RequestedCRU:   round6(s.MyCRU),
 		}
 	}
 	o := out{
-		Repo:          repo,
-		Number:        s.PR.Number,
-		Title:         s.PR.Title,
-		Author:        s.PR.Author,
-		State:         s.PR.State,
-		Additions:     s.PR.Additions,
-		Deletions:     s.PR.Deletions,
-		LOC:           s.LOC,
-		Files:         s.PR.Files,
-		SizeLabel:     string(s.Bucket),
-		SizeFactor:    s.SizeFactor,
-		RiskLabel:     riskLabel(s.Risk),
-		RiskFactor:    s.Risk,
-		NormalCRU:     s.CRU(),
-		TotalCRU:      s.AuthorCRU(),
-		You:           you,
-		MyIdentities:  s.MyIdentities,
-		HasCodeowners: s.HasCodeowners,
-		Owners:        owners,
-		UnownedLOC:    s.UnownedChanges,
+		Repo:         repo,
+		Number:       s.PR.Number,
+		Title:        s.PR.Title,
+		Author:       s.PR.Author,
+		State:        s.PR.State,
+		Additions:    s.PR.Additions,
+		Deletions:    s.PR.Deletions,
+		LOC:          s.LOC,
+		Files:        s.PR.Files,
+		SizeLabel:    s.Size.String(),
+		SizeFactor:   round6(float64(s.Size)),
+		RiskLabel:    s.Risk.String(),
+		RiskFactor:   round6(s.Risk.Factor()),
+		NormalCRU:    round6(s.CRU()),
+		TotalCRU:     round6(s.AuthorCRU()),
+		You:          you,
+		MyIdentities: s.MyIdentities,
+		Owners:       owners,
+		UnownedLOC:   s.UnownedChanges,
 	}
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
+	// Compact NDJSON: one PR per line, no internal newlines. This makes
+	// multi-PR output ("gh cru a b c", "gh cru list ...") a real
+	// machine-parseable stream. Users who want pretty-printed JSON for
+	// a single PR can pipe through `jq .`.
 	return enc.Encode(o)
 }
 
-func riskLabel(r float64) string {
-	if r > 1.0 {
-		return "high"
-	}
-	return "low"
+// round6 rounds a float64 to 6 decimal places. Used by JSON output to
+// strip floating-point noise from CDF approximations and division (e.g.
+// 0.16666666666666666 → 0.166667, 2.0000000000000004 → 2). Six places
+// preserves all signal (PR sizes never need more than ~4 significant
+// digits of factor) and keeps downstream `==` comparisons stable.
+func round6(x float64) float64 {
+	return math.Round(x*1e6) / 1e6
 }
+
