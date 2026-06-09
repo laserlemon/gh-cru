@@ -23,6 +23,7 @@ import (
 	"github.com/cli/go-gh/v2/pkg/text"
 	"github.com/mgutz/ansi"
 
+	"github.com/laserlemon/cru"
 	"github.com/laserlemon/gh-cru/internal/score"
 )
 
@@ -227,23 +228,23 @@ var (
 
 // sizeColor returns text colored by the size bucket's palette
 // (XS bright green → XL pink). Used for both the bucket label cell
-// ("XS") and any numeric value that conceptually shares the bucket's
-// color (e.g. the size factor). Falls back to plain text when color
-// is disabled.
+// (cru.SizeXS etc.) and any numeric value that conceptually shares
+// the bucket's color (e.g. the size factor). Falls back to plain text
+// when color is disabled.
 func sizeColor(text, bucket string, enabled bool) string {
 	if !enabled {
 		return text
 	}
 	switch bucket {
-	case "XS":
+	case cru.SizeXS:
 		return colorSizeXS(text)
-	case "S":
+	case cru.SizeS:
 		return colorSizeS(text)
-	case "M":
+	case cru.SizeM:
 		return colorSizeM(text)
-	case "L":
+	case cru.SizeL:
 		return colorSizeL(text)
-	case "XL":
+	case cru.SizeXL:
 		return colorSizeXL(text)
 	}
 	return text

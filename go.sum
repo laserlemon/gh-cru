@@ -40,6 +40,8 @@ github.com/laserlemon/cru v0.1.1-0.20260609221725-05be924ffe99 h1:uuRlusgsOTowvD
 github.com/laserlemon/cru v0.1.1-0.20260609221725-05be924ffe99/go.mod h1:BYr4SOvxqEUzo9f6Y44IcJ5RuQnX9Xjg5AXtLs++PlM=
 github.com/laserlemon/cru v0.1.1-0.20260609225305-468cb2f8382c h1:F/vF/JdPtKTja5b/2wsqwCScfpHO7TVmFGvrovGmguU=
 github.com/laserlemon/cru v0.1.1-0.20260609225305-468cb2f8382c/go.mod h1:BYr4SOvxqEUzo9f6Y44IcJ5RuQnX9Xjg5AXtLs++PlM=
+github.com/laserlemon/cru v0.1.1-0.20260609225601-cf42a4003377 h1:O7x6hMQ8Qf3XqqfgM5JL+ehNrTbXKIi/a5DHFHjaW6Y=
+github.com/laserlemon/cru v0.1.1-0.20260609225601-cf42a4003377/go.mod h1:BYr4SOvxqEUzo9f6Y44IcJ5RuQnX9Xjg5AXtLs++PlM=
 github.com/lucasb-eyer/go-colorful v1.2.0 h1:1nnpGOrhyZZuNyfu1QjKiUICQ74+3FNCN69Aj6K7nkY=
 github.com/lucasb-eyer/go-colorful v1.2.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=
