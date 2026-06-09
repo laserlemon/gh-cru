@@ -5,9 +5,21 @@ A `gh` extension to measure pull requests in Code Review Units (CRU).
 ```sh
 gh extension install laserlemon/gh-cru
 
+# Score one PR or a list of refs (the "view" verb is implied).
 gh cru 1234
 gh cru owner/repo#1234
 gh cru https://github.com/owner/repo/pull/1234
+gh cru cli/cli#13612 cli/cli#13599 cli/cli#13597
+
+# Score every PR that matches a "gh pr list" query.
+gh cru list --repo owner/name --state merged --limit 50
+gh cru list --author @me --state open
+gh cru list --search 'is:open updated:>2026-01-01'
+
+# Stdin: pre-fetched JSON (skips per-PR API calls when fields are included).
+gh pr list --repo owner/name --state merged --limit 50 --json \
+  url,number,additions,deletions,changedFiles,baseRefName,mergeCommit,labels,author,state,files,title \
+  | gh cru view -
 ```
 
 ## What CRU is
@@ -28,9 +40,10 @@ CRU = size factor × ownership share × risk factor
   A 1,000-line PR where 50 lines touch your team's code costs you 5% of the
   size factor. LOC the CODEOWNERS rules don't cover is attributed to a
   synthetic `unowned` owner so unowned work is never silently dropped.
-- **risk factor** is `1.0` by default; PRs labeled `risk:high` get `4.0`
-  (same span as the difference between an S and an L by size). Configurable
-  via `--risk-label`.
+- **risk factor** is `1.0` by default. PRs labeled `risk:medium` get `2.0` and
+  PRs labeled `risk:high` get `4.0` (same span as the difference between an S
+  and an L by size). Configurable via `--high-risk-label` and `--medium-risk-label`;
+  high wins when both match.
 
 For the math, see [`laserlemon/cru`](https://github.com/laserlemon/cru).
 
@@ -89,16 +102,50 @@ pipe them in:
 # Score many PRs at once; CODEOWNERS is fetched once per repo per invocation.
 gh cru 1234 1235 1236 1237
 
-# Pipe from gh pr list.
-gh pr list --state merged --limit 100 --json url --jq '.[].url' | xargs gh cru
+# Cross-repo: each ref carries its own owner/name.
+gh cru cli/cli#13612 laserlemon/cru#1
+```
+
+### `gh cru list`
+
+Forward any `gh pr list` flag to score the whole result set:
+
+```sh
+gh cru list --state merged --limit 50
+gh cru list --author @me --state open
+gh cru list --repo owner/name --label bug
+gh cru list --search 'is:open updated:>2026-01-01'
+```
+
+`gh cru list` runs `gh pr list` once with a fixed `--json` field set, then
+scores each PR locally without per-PR API calls. CODEOWNERS is fetched
+once per unique repo. For a single-repo `--state open` workload, that's
+**1 list call + 1 CODEOWNERS fetch** for all 50+ PRs. Any `--json` flag
+the user passes is silently overridden so the required field set is
+always emitted.
+
+### `gh cru view -` (stdin)
+
+For full control over which PRs get scored, pipe JSON to `gh cru view -`
+(or just `gh cru -`). Accepts a JSON array, NDJSON, or one JSON object.
+
+```sh
+# Use gh search to span orgs, then score.
+gh search prs --json url --limit 20 author:laserlemon \
+  | gh cru view -
+
+# Pre-fetched scoring fields: 0 PR-API calls per row.
+gh pr list --repo owner/name --json \
+  url,additions,deletions,changedFiles,baseRefName,mergeCommit,labels,author,state,files \
+  | gh cru view -
 ```
 
 Output mode auto-detects TTY:
 
 - **TTY**: human-readable with colored markers and column alignment
 - **piped**: tab-separated rows, no color (gh script-mode convention)
-- **`--json`**: structured per-PR object, one per line; `is_you` and
-  `is_unowned` flags on each owner row
+- **`--json`**: compact NDJSON; one PR per line. `is_you` and `is_unowned`
+  flags on each owner row. Pipe through `jq .` for pretty output
 
 ## Flags
 
@@ -108,7 +155,8 @@ Output mode auto-detects TTY:
 | `--json` | Structured output |
 | `--skip-ownership` | Skip CODEOWNERS lookups; treat ownership as 1.0 |
 | `--skip-personal` | Skip fetching your team memberships; no "your CRU" |
-| `--risk-label LABEL` | PR label that marks high risk (default: `risk:high`) |
+| `--high-risk-label LABEL` | PR label(s) that mark high risk (4×); repeat or comma-separate (default: `risk:high`) |
+| `--medium-risk-label LABEL` | PR label(s) that mark medium risk (2×); repeat or comma-separate (default: `risk:medium`). High wins over medium |
 
 ## Install
 

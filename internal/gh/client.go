@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cli/go-gh/v2"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/hmarr/codeowners"
 
@@ -36,6 +37,13 @@ type Client struct {
 	authTeams    []string
 	authTeamsOK  bool
 	authResolved bool
+
+	// orgReadable caches HEAD /orgs/{org}/teams results per process. true
+	// means the token can list that org's teams (proves read:org or
+	// equivalent); false means HEAD returned 403 (the silent-empty trap
+	// where /user/teams returned 200+[] not because the user is on zero
+	// teams but because the token lacks org-read scope).
+	orgReadable sync.Map // map[string]bool
 }
 
 // ownersEntry is the in-memory record for a repo's CODEOWNERS in one run.
@@ -116,15 +124,19 @@ type File struct {
 // identities: their @login plus every @org/team-slug they belong to. These
 // are the strings that match against codeowners rule owners.
 //
-// teamsOK indicates whether team enumeration via /user/teams succeeded. It
-// returns false when the token lacks `read:org` scope (e.g. the default
-// Codespaces GITHUB_TOKEN, fine-grained PATs without org permissions, or
-// any other narrow-scope token). When teamsOK is false, identities still
-// contains the @login so direct CODEOWNERS matches work, but team-based
-// ownership won't be detected - surface this to the user.
+// teamsOK indicates whether team enumeration via /user/teams looked
+// honest. It's false when the call errors outright (403 / 404) but is
+// also subject to a per-process probe (CanListOrgTeams) for the silent-
+// empty trap: tokens lacking read:org get 200+[] from /user/teams instead
+// of 403, so an empty result is ambiguous. Use CanListOrgTeams against a
+// known org to disambiguate.
 //
-// Resolved once per process (paginated /user/teams may cost a few API calls
-// for accounts on many teams; cached afterwards).
+// Identities always include the @login, so direct CODEOWNERS matches
+// work even when teamsOK is false; only team-based ownership is missed.
+//
+// Resolved once per process. /user/teams is shelled to gh with a 1h disk
+// cache (gh's own --cache flag) so back-to-back invocations within the
+// hour don't re-hit the API.
 func (c *Client) AuthIdentities() (login string, identities []string, teamsOK bool, err error) {
 	c.mu.Lock()
 	if c.authResolved {
@@ -134,7 +146,7 @@ func (c *Client) AuthIdentities() (login string, identities []string, teamsOK bo
 	}
 	c.mu.Unlock()
 
-	// 1. /user
+	// 1. /user — direct REST, sub-millisecond response, not worth caching.
 	var u struct {
 		Login string `json:"login"`
 	}
@@ -142,40 +154,40 @@ func (c *Client) AuthIdentities() (login string, identities []string, teamsOK bo
 		return "", nil, false, fmt.Errorf("GET /user: %w", err)
 	}
 
-	// 2. /user/teams (paginated). Each team contributes "@org/team-slug".
+	// 2. /user/teams via `gh api --cache 1h --paginate --jq …`. Shelling
+	// to gh buys us:
+	//   - gh's own 1h disk cache, no extra wiring
+	//   - --paginate (no manual page loop)
+	//   - --jq to extract just the strings we want
+	//   - gh's auth resolution (env, keyring, gh auth status)
+	// Cost: a few-ms gh process launch per cache-miss invocation.
 	teams := []string{"@" + u.Login}
 	teamsOK = true
-	for page := 1; page <= 50; page++ {
-		var batch []struct {
-			Slug         string `json:"slug"`
-			Organization struct {
-				Login string `json:"login"`
-			} `json:"organization"`
+	stdout, _, gerr := gh.Exec(
+		"api",
+		"--cache", "1h",
+		"--paginate",
+		"--jq", `.[] | "@" + .organization.login + "/" + .slug`,
+		"user/teams",
+	)
+	if gerr != nil {
+		// gh exits non-zero on 4xx/5xx. 403 / 404 = no read:org or no
+		// teams endpoint; treat as "fall back to @login only".
+		// Anything else, bubble the error so the user sees what broke.
+		msg := gerr.Error()
+		if strings.Contains(msg, "HTTP 403") || strings.Contains(msg, "HTTP 404") {
+			teamsOK = false
+		} else {
+			return "", nil, false, fmt.Errorf("gh api user/teams: %w", gerr)
 		}
-		endpoint := fmt.Sprintf("user/teams?per_page=100&page=%d", page)
-		if err := c.rest.Get(endpoint, &batch); err != nil {
-			// /user/teams requires read:org. If the token lacks it (e.g.
-			// Codespaces ghu_ tokens, fine-grained PATs without the right
-			// permissions), record that and surface it to the caller -
-			// we still have the @login but team-based ownership won't
-			// be detected.
-			if isForbidden(err) || isNotFound(err) {
-				teamsOK = false
-				break
-			}
-			return "", nil, false, fmt.Errorf("GET %s: %w", endpoint, err)
-		}
-		if len(batch) == 0 {
-			break
-		}
-		for _, t := range batch {
-			if t.Slug == "" || t.Organization.Login == "" {
+	} else {
+		// One @org/team per line, blank lines from empty pages elided.
+		for _, line := range strings.Split(stdout.String(), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
 				continue
 			}
-			teams = append(teams, fmt.Sprintf("@%s/%s", t.Organization.Login, t.Slug))
-		}
-		if len(batch) < 100 {
-			break
+			teams = append(teams, line)
 		}
 	}
 
@@ -186,6 +198,31 @@ func (c *Client) AuthIdentities() (login string, identities []string, teamsOK bo
 	c.authResolved = true
 	c.mu.Unlock()
 	return u.Login, teams, teamsOK, nil
+}
+
+// CanListOrgTeams probes whether the current token has org-read access
+// against the given org. Used to disambiguate the silent-empty trap
+// where /user/teams returns 200+[] on a token without read:org instead
+// of 403. HEAD /orgs/{org}/teams is the only honest signal: it returns
+// 200 when the token can list (proves read:org or membership-equivalent
+// scope) and 403 when it can't.
+//
+// Result is cached per process per org. No disk cache: the 403 case
+// isn't cached by gh anyway (go-gh's cache.go explicitly skips 403),
+// and the 200 case is cheap enough to re-probe each process.
+func (c *Client) CanListOrgTeams(org string) bool {
+	if org == "" {
+		return false
+	}
+	if v, ok := c.orgReadable.Load(org); ok {
+		return v.(bool)
+	}
+	// HEAD via gh api: -X HEAD sends no body, -i would print response
+	// headers (we don't need them — exit code carries the verdict).
+	_, _, err := gh.Exec("api", "-X", "HEAD", "orgs/"+org+"/teams")
+	readable := err == nil
+	c.orgReadable.Store(org, readable)
+	return readable
 }
 
 // FetchPR returns the basic PR metadata.
