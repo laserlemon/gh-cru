@@ -60,12 +60,12 @@ Size factor  3.391
 Risk label   low
 Risk factor  1.000
 Normal CRU   3.391
-Total CRU    4.522
-Your CRU     0.848
+Total CRU    3.673
+Your CRU     1.695
 
-   CODE OWNER              LOC  SHARE    CRU
-=  laserlemon               40  0.167  0.565
-*  acme/big-orca            60  0.250  0.848
+   CODE OWNER               LOC  SHARE    CRU
+=  laserlemon                40  0.167  0.565
+*  acme/big-orca             80  0.333  1.130
 •  acme/payments-reviewers  100  0.417  1.413
 ~  unowned                   40  0.167  0.565
 ```
@@ -80,8 +80,15 @@ A 1-character marker in the gutter classifies each row:
 | `~` | Synthetic `unowned` row: lines no CODEOWNERS rule matched |
 
 `Normal CRU` is the PR's intrinsic weight (size × risk). `Total CRU` sums
-all rows in the table including `unowned`, so it's always at least
-`Normal CRU` — owner overlap pushes it above.
+all rows in the table including `unowned`; it exceeds `Normal CRU` here
+because the `big-orca` team and the `payments-reviewers` team share some
+of the same files, so per-owner LOC sums to more than the PR's total LOC.
+With no overlap, `Total CRU` equals `Normal CRU`.
+
+`Your CRU` is what THIS PR costs you to review: every file owned by your
+`@login` OR any team you belong to, counted once even when both match.
+For the reviewer above (`laserlemon`, on `acme/big-orca`), that's 40
+direct + 80 team = 120 LOC, share 0.500.
 
 ## Four numbers, four questions
 
@@ -144,8 +151,11 @@ Output mode auto-detects TTY:
 
 - **TTY**: human-readable with colored markers and column alignment
 - **piped**: tab-separated rows, no color (gh script-mode convention)
-- **`--json`**: compact NDJSON; one PR per line. `is_you` and `is_unowned`
-  flags on each owner row. Pipe through `jq .` for pretty output
+- **`--json`**: compact NDJSON; one PR per line. Each owner row carries
+  `name` (bare login or `org/team`, `null` for the synthetic unowned row),
+  `type` (`"user"` / `"team"` / `"unowned"`), and `is_you` (true when the
+  owner matches your `@login` directly or via team membership). Pipe
+  through `jq .` for pretty output
 
 ## Flags
 

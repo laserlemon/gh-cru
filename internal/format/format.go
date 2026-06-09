@@ -531,10 +531,11 @@ func displayOwner(s string) string {
 	return strings.TrimPrefix(s, "@")
 }
 
-// JSON writes one indented JSON object per call.
+// JSON writes one compact JSON object per call (NDJSON when looped over
+// multiple PRs).
 //
 // Float values are rounded to 6 decimal places before serialization.
-// Rationale: the underlying math (SizeFactor, ownership shares, CRU)
+// Rationale: the underlying math (Size, ownership shares, CRU)
 // involves Φ-CDF approximations and floating-point division whose tails
 // of `.999999999` and `.000000001` artifacts are noise, not signal.
 // Six places preserves all meaningful precision (PR sizes never need

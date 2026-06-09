@@ -86,8 +86,8 @@ func stripANSI(s string) string {
 // --- JSON shape -----------------------------------------------------------
 
 // TestJSONShapeIncludesUnowned verifies that the JSON output includes
-// the synthetic unowned owner row with is_unowned=true, since the JSON
-// shape is a public contract for downstream scripts.
+// the synthetic unowned owner row with name=null and type="unowned",
+// since the JSON shape is a public contract for downstream scripts.
 func TestJSONShapeIncludesUnowned(t *testing.T) {
 	owners := []score.Ownership{
 		{Owner: "@acme/eng", OwnedLOC: 60, Share: 0.6, Score: 1.2},

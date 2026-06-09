@@ -13,7 +13,8 @@ import (
 
 // UnownedOwnerLabel is the synthetic "owner" used to attribute review
 // cost to LOC that no CODEOWNERS rule matches. Rendered with a `~` gutter
-// marker in the Human output and a dedicated is_unowned flag in JSON.
+// marker in the Human output, and surfaced in JSON as an owner row with
+// `name: null` and `type: "unowned"`.
 const UnownedOwnerLabel = "unowned"
 
 // PRScore is the full scoring result for one PR.
@@ -228,7 +229,8 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 	// (real + unowned) sum to exactly 1.0.
 	//
 	// Skipped when there is no unowned LOC. Also rendered with a `~`
-	// gutter marker in the Human formatter and an is_unowned flag in JSON.
+	// gutter marker in the Human formatter and as an owner row with
+	// `name: null` and `type: "unowned"` in JSON.
 	if result.UnownedChanges > 0 {
 		share := float64(result.UnownedChanges) / float64(denom)
 		result.OwnershipMap[UnownedOwnerLabel] = Ownership{
@@ -267,7 +269,7 @@ func (s PRScore) SortedOwners() []Ownership {
 }
 
 // TotalScore is the sum of all owner scores. For PRs with no CODEOWNERS,
-// this is the SizeFactor × Risk (treating the synthetic unowned owner as 100%).
+// this is Size × Risk (treating the synthetic unowned owner as 100%).
 //
 // Deprecated: prefer AuthorCRU() which says the same thing more precisely.
 func (s PRScore) TotalScore() float64 {
