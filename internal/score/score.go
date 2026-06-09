@@ -11,23 +11,29 @@ import (
 	ghc "github.com/laserlemon/gh-cru/internal/gh"
 )
 
+// UnownedOwnerLabel is the synthetic "owner" used to attribute review
+// cost to LOC that no CODEOWNERS rule matches. Rendered with a `~` gutter
+// marker in the Human output and a dedicated is_unowned flag in JSON.
+const UnownedOwnerLabel = "unowned"
+
 // PRScore is the full scoring result for one PR.
 //
 // Four distinct CRU numbers are computed; each answers a different question:
 //
-//   - CRU       - owner-agnostic; size_factor × risk. The PR's intrinsic
+//   - CRU       - owner-agnostic; SizeFactor × Risk. The PR's intrinsic
 //                 review weight, as if a single reviewer owned every line.
 //                 Default scalar score: "how big a review is this?".
-//   - AuthorCRU - sum across all CODEOWNERS shares. Total review burden the
-//                 PR places on the team. Useful for the author and for
-//                 aggregate workload dashboards.
+//   - AuthorCRU - sum across all CODEOWNERS shares PLUS the synthetic
+//                 "unowned" share. Total review burden the PR places on
+//                 the team. Always ≥ CRU() since unowned LOC is attributed
+//                 to a synthetic "unowned" owner rather than being free.
 //   - MyCRU     - what THIS PR actually costs the current user to review,
 //                 based on their @login + team memberships matching the
 //                 CODEOWNERS rules. Each owned file counted once even if
 //                 the user matches multiple owners (self + team).
 //   - Per-owner - the value in each Ownership.Score. Individual reviewer's
-//                 actual scored work for their slice (does not deduplicate
-//                 across multiple of the user's identities).
+//                 actual scored work for their ownership share (does not
+//                 deduplicate across multiple of the user's identities).
 type PRScore struct {
 	PR             ghc.PR
 	LOC            int
@@ -56,22 +62,27 @@ type PRScore struct {
 	// MyCRU. Empty when no personal scoring was requested (e.g. --skip-ownership).
 	MyIdentities []string
 	MyOwnedLOC   int     // LOC of files owned by any of my identities (counted once)
-	MyShare      float64 // MyOwnedLOC / total LOC, in [0, 1]
-	MyCRU        float64 // size_factor × MyShare × risk
+	MyShare      float64 // ownership share for "me": MyOwnedLOC / total LOC, in [0, 1]
+	MyCRU        float64 // SizeFactor × MyShare × Risk
 }
 
-// CRU returns the owner-agnostic CRU: size_factor × risk. This is the
+// CRU returns the owner-agnostic CRU: SizeFactor × Risk. This is the
 // "what size review is this?" score - independent of who owns what.
 func (s PRScore) CRU() float64 {
 	return s.SizeFactor * s.Risk
 }
 
 // AuthorCRU returns the total review burden the PR places on the team:
-// sum of per-owner scores. For PRs without CODEOWNERS, this equals CRU().
+// sum of per-owner scores INCLUDING the synthetic "unowned" owner that
+// captures LOC matched by no CODEOWNERS rule. Always ≥ CRU(); equality
+// when no owners overlap.
+//
+// For PRs in a repo with no CODEOWNERS file, the entire PR is attributed
+// to the synthetic "unowned" owner, so AuthorCRU() == CRU(). For PRs in
+// a CODEOWNERS repo with full coverage and no overlap, also equals
+// CRU(). Overlap (one line owned by multiple teams) is the only case
+// that drives AuthorCRU > CRU.
 func (s PRScore) AuthorCRU() float64 {
-	if !s.HasCodeowners {
-		return s.CRU()
-	}
 	total := 0.0
 	for _, o := range s.OwnershipMap {
 		total += o.Score
@@ -80,11 +91,17 @@ func (s PRScore) AuthorCRU() float64 {
 }
 
 // Ownership is one owner's stake in a PR.
+//
+//	Score = SizeFactor × Share × Risk
+//
+// where Share is this owner's ownership share (OwnedLOC / total LOC, in
+// [0, 1]). The synthetic "unowned" owner uses the same shape with
+// Share = unowned_LOC / total LOC.
 type Ownership struct {
-	Owner       string  // login or @org/team
-	OwnedLOC    int     // LOC of files this owner is responsible for
-	Share       float64 // OwnedLOC / total LOC, in [0, 1]
-	Score       float64 // size_factor × Share × risk
+	Owner    string  // login or @org/team, or UnownedOwnerLabel for the synthetic unowned row
+	OwnedLOC int     // LOC of files this owner is responsible for
+	Share    float64 // ownership share: OwnedLOC / total LOC, in [0, 1]
+	Score    float64 // SizeFactor × Share × Risk
 }
 
 // Compute builds a PRScore from a fetched PR, its file diffs, and the
@@ -118,7 +135,23 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 	}
 
 	if owners == nil {
+		// No CODEOWNERS file in the repo: the entire PR is unowned.
+		// Populate the synthetic unowned owner so the score and the
+		// owners table are uniform with the CODEOWNERS-but-no-rule-match
+		// case. AuthorCRU sums OwnershipMap; with one unowned entry of
+		// share=1.0, it equals CRU() (size × risk).
 		result.UnownedChanges = loc
+		denom := loc
+		if denom == 0 {
+			denom = 1
+		}
+		result.OwnershipMap[UnownedOwnerLabel] = Ownership{
+			Owner:    UnownedOwnerLabel,
+			OwnedLOC: loc,
+			Share:    float64(loc) / float64(denom),
+			Score:    sf * float64(loc) / float64(denom) * risk,
+		}
+		result.OwnerOrder = []string{UnownedOwnerLabel}
 		return result
 	}
 
@@ -180,6 +213,27 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, riskLabel s
 		}
 	}
 
+	// Synthetic "unowned" owner: attribute the LOC that no CODEOWNERS rule
+	// matched. Without this, AuthorCRU under-counts review reality — those
+	// lines still need a reviewer, just not a CODEOWNERS-named one. With
+	// it, AuthorCRU is always ≥ CRU(), with equality when ownership shares
+	// (real + unowned) sum to exactly 1.0.
+	//
+	// Skipped when there is no unowned LOC. Also rendered with a `~`
+	// gutter marker in the Human formatter and an is_unowned flag in JSON.
+	if result.UnownedChanges > 0 {
+		share := float64(result.UnownedChanges) / float64(denom)
+		result.OwnershipMap[UnownedOwnerLabel] = Ownership{
+			Owner:    UnownedOwnerLabel,
+			OwnedLOC: result.UnownedChanges,
+			Share:    share,
+			Score:    sf * share * risk,
+		}
+		// Append to owner order so the unowned row renders LAST in the
+		// table (after all real owners).
+		result.OwnerOrder = append(result.OwnerOrder, UnownedOwnerLabel)
+	}
+
 	if len(myIdentities) > 0 {
 		result.MyOwnedLOC = myOwnedLOC
 		result.MyShare = float64(myOwnedLOC) / float64(denom)
@@ -205,7 +259,7 @@ func (s PRScore) SortedOwners() []Ownership {
 }
 
 // TotalScore is the sum of all owner scores. For PRs with no CODEOWNERS,
-// this is the size_factor × risk (treating the reviewer as 100% owner).
+// this is the SizeFactor × Risk (treating the synthetic unowned owner as 100%).
 //
 // Deprecated: prefer AuthorCRU() which says the same thing more precisely.
 func (s PRScore) TotalScore() float64 {
