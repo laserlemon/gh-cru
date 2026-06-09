@@ -1,6 +1,6 @@
 // Package gh wraps the gh CLI's API clients with the shape gh-cru needs:
 // a single fetch entry point per PR, persistent on-disk CODEOWNERS caching
-// (so `gh pr list | xargs gh cru` reuses the 2.5MB github/github fetch
+// (so `gh pr list | xargs gh cru` reuses each large CODEOWNERS fetch
 // across subprocess boundaries), and a per-process in-memory cache for
 // batched runs.
 package gh

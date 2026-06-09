@@ -19,8 +19,9 @@ CRU = size_factor × ownership_share × risk
 ```
 
 - **size_factor** is `2^(5·F(L) − 2.5)`, where `F(L)` is the PR's percentile
-  rank in a locked reference distribution of pre-Copilot github/github merged
-  PRs. The unit is calibrated so that one "typical" PR (the distribution's
+  rank in a locked reference distribution of merged PR sizes from a large
+  monolithic GitHub repository with thousands of individual contributors.
+  The unit is calibrated so that one "typical" PR (the distribution's
   median) scores exactly `1.0`. Bounded between ~0.18 (typos) and ~5.66
   (monster PRs).
 - **ownership_share** is `your_owned_LOC / total_LOC` based on CODEOWNERS.
@@ -35,25 +36,26 @@ For the math, see [`laserlemon/cru`](https://github.com/laserlemon/cru).
 ## Example
 
 ```sh
-$ gh cru https://github.com/github/github/pull/434551
+$ gh cru acme/web#1234
 
-Rename DelegatedBypassReviewersComponent to DelegatedBypassersComponent github/github#434551
-closed • by @rupss • +19 -19 in 5 file(s)
+acme/web#1234
 
-  size factor:  1.09   (38 LOC, M)
-  risk factor:  1.0    (low)
-  normal CRU:   1.09   (size × risk; PR-intrinsic weight)
-  your CRU:     0.11   (4/38 LOC = 10.5% match your identities)
+LOC          500
+Size label   L
+Size factor  4.362
+Risk label   low
+Risk factor  1.000
+Normal CRU   4.362
+Total CRU    4.362
+Your CRU     1.745
 
-  CRU by owner:
-      @github/secret-scanning-experiences-reviewers     34 LOC   89.5%  →  0.97 CRU
-      @github/secret-scanning-reviewers                 34 LOC   89.5%  →  0.97 CRU
-    * @github/security-products-enablement-reviewers     4 LOC   10.5%  →  0.11 CRU
-  total CRU:    2.06   (sum across owners; team review burden)
+CODE OWNER                      LOC    FACTOR    CRU
+  @acme/payments-reviewers      300    0.600    2.617
+* @acme/checkout-reviewers      200    0.400    1.745
 ```
 
 The `* ` marker is the git-branch convention: that line matches one of
-your identities (your @login or any team you're on).
+your identities (your `@login` or any team you're on).
 
 ## Four numbers, four questions
 

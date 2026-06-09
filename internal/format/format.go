@@ -43,7 +43,7 @@ var (
 	colorBold     = ansi.ColorFunc("default+b")
 	colorBoldCyan = ansi.ColorFunc("cyan+b")
 
-	// Size-bucket colors, matched to github/github's size/* PR labels
+	// Size-bucket colors, matched to GitHub's conventional size/* PR labels
 	// (lightly darkened so they hold up on light-mode terminals too).
 	// Bold so the values stand out from the gray metadata labels.
 	colorSizeXS = ansi.ColorFunc("28+b")  // dark green
@@ -52,7 +52,7 @@ var (
 	colorSizeL  = ansi.ColorFunc("166+b") // burnt orange
 	colorSizeXL = ansi.ColorFunc("124+b") // deep red
 
-	// Risk colors, matched to github/github's risk:* PR labels.
+	// Risk colors, matched to conventional risk:* PR labels.
 	colorRiskLow  = ansi.ColorFunc("30+b") // dark teal
 	colorRiskHigh = ansi.ColorFunc("88+b") // blood red
 
@@ -82,7 +82,7 @@ var (
 	colorLabel = ansi.ColorFunc("default+d")
 )
 
-// sizeColor maps the bucket label to its github/github-matched color
+// sizeColor maps the bucket label to its label-matched color
 // (XS bright green → XL pink). Falls back to the default fg when color
 // is disabled.
 func sizeColor(bucket string, enabled bool) string {
@@ -104,7 +104,7 @@ func sizeColor(bucket string, enabled bool) string {
 	return bucket
 }
 
-// riskColor maps low/high to their github/github-matched label colors
+// riskColor maps low/high to their conventional label colors
 // (teal / salmon).
 func riskColor(label string, enabled bool) string {
 	if !enabled {
