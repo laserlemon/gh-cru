@@ -211,8 +211,8 @@ func TestComputeMyCRUDirect(t *testing.T) {
 	if !closeTo(s.MyShare, 0.4) {
 		t.Errorf("MyShare = %v, want 0.4", s.MyShare)
 	}
-	if !closeTo(s.MyCRU, cru.Calculate(100, 0.4, cru.RiskLow)) {
-		t.Errorf("MyCRU = %v, want %v", s.MyCRU, cru.Calculate(100, 0.4, cru.RiskLow))
+	if !closeTo(s.MyCRU, cru.Calculate(100, 40, cru.RiskLow)) {
+		t.Errorf("MyCRU = %v, want %v", s.MyCRU, cru.Calculate(100, 40, cru.RiskLow))
 	}
 }
 
@@ -261,7 +261,7 @@ func TestComputeHighRisk(t *testing.T) {
 	if s.Risk != cru.RiskHigh {
 		t.Errorf("Risk = %v, want %v (RiskHigh)", s.Risk, cru.RiskHigh)
 	}
-	wantCRU := cru.Calculate(50, 1.0, cru.RiskHigh)
+	wantCRU := cru.Calculate(50, 50, cru.RiskHigh)
 	if !closeTo(s.CRU(), wantCRU) {
 		t.Errorf("CRU = %v, want %v (size × 4)", s.CRU(), wantCRU)
 	}
@@ -312,7 +312,7 @@ func TestCRUEqualsSizeTimesRisk(t *testing.T) {
 	owners := ownersFrom(t, "*.go @nobody/important\n")
 
 	s := Compute(p, files, owners, []string{"risk:high"}, nil, "", nil)
-	want := cru.Calculate(50, 1.0, cru.RiskHigh)
+	want := cru.Calculate(50, 50, cru.RiskHigh)
 	if !closeTo(s.CRU(), want) {
 		t.Errorf("CRU() = %v, want %v", s.CRU(), want)
 	}

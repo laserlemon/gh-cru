@@ -149,6 +149,12 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 		// owners table are uniform with the CODEOWNERS-but-no-rule-match
 		// case. AuthorCRU sums OwnershipMap; with one unowned entry of
 		// share=1.0, it equals CRU() (size × risk).
+		//
+		// Safe to use cru.Calculate here because totalLOC == ownedLOC,
+		// so the share is 1.0 and the share-denominator subtlety in the
+		// CODEOWNERS branch below (denom = sum(file.Changes) which may
+		// differ from pr.LOC when renames inflate the count) doesn't
+		// apply.
 		result.UnownedChanges = loc
 		denom := loc
 		if denom == 0 {
@@ -158,7 +164,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 			Owner:    UnownedOwnerLabel,
 			OwnedLOC: loc,
 			Share:    float64(loc) / float64(denom),
-			Score:    sf * float64(loc) / float64(denom) * risk.Factor(),
+			Score:    cru.Calculate(loc, loc, risk),
 		}
 		result.OwnerOrder = []string{UnownedOwnerLabel}
 		return result
