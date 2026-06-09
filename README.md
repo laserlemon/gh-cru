@@ -15,21 +15,22 @@ gh cru https://github.com/owner/repo/pull/1234
 CRU is a bounded, anchored measure of PR review effort:
 
 ```
-CRU = size_factor × ownership_share × risk
+CRU = size factor × ownership share × risk factor
 ```
 
-- **size_factor** is `2^(5·F(L) − 2.5)`, where `F(L)` is the PR's percentile
+- **size factor** is `2^(5·F(L) − 2.5)`, where `F(L)` is the PR's percentile
   rank in a locked reference distribution of merged PR sizes from a large
   monolithic GitHub repository with thousands of individual contributors.
   The unit is calibrated so that one "typical" PR (the distribution's
   median) scores exactly `1.0`. Bounded between ~0.18 (typos) and ~5.66
   (monster PRs).
-- **ownership_share** is `your_owned_LOC / total_LOC` based on CODEOWNERS.
+- **ownership share** is `owned_LOC / total_LOC` based on CODEOWNERS.
   A 1,000-line PR where 50 lines touch your team's code costs you 5% of the
-  size factor.
-- **risk** is `1.0` by default; PRs labeled `risk:high` get `4.0` (same span
-  as the difference between an S and an L by size). Configurable via
-  `--risk-label`.
+  size factor. LOC the CODEOWNERS rules don't cover is attributed to a
+  synthetic `unowned` owner so unowned work is never silently dropped.
+- **risk factor** is `1.0` by default; PRs labeled `risk:high` get `4.0`
+  (same span as the difference between an S and an L by size). Configurable
+  via `--risk-label`.
 
 For the math, see [`laserlemon/cru`](https://github.com/laserlemon/cru).
 
@@ -40,22 +41,34 @@ $ gh cru acme/web#1234
 
 acme/web#1234
 
-LOC          500
-Size label   L
-Size factor  4.362
+LOC          240
+Size label   XL
+Size factor  3.391
 Risk label   low
 Risk factor  1.000
-Normal CRU   4.362
-Total CRU    4.362
-Your CRU     1.745
+Normal CRU   3.391
+Total CRU    4.522
+Your CRU     0.848
 
-CODE OWNER                      LOC    FACTOR    CRU
-  @acme/payments-reviewers      300    0.600    2.617
-* @acme/checkout-reviewers      200    0.400    1.745
+   CODE OWNER              LOC  SHARE    CRU
+=  laserlemon               40  0.167  0.565
+*  acme/big-orca            60  0.250  0.848
+•  acme/payments-reviewers  100  0.417  1.413
+~  unowned                   40  0.167  0.565
 ```
 
-The `* ` marker is the git-branch convention: that line matches one of
-your identities (your `@login` or any team you're on).
+A 1-character marker in the gutter classifies each row:
+
+| Marker | Meaning |
+|---|---|
+| `=` | Direct `@login` match (you specifically own these lines, bold blue) |
+| `*` | Team membership match (a team you're on owns these, blue) |
+| `•` | Someone else owns these |
+| `~` | Synthetic `unowned` row: lines no CODEOWNERS rule matched |
+
+`Normal CRU` is the PR's intrinsic weight (size × risk). `Total CRU` sums
+all rows in the table including `unowned`, so it's always at least
+`Normal CRU` — owner overlap pushes it above.
 
 ## Four numbers, four questions
 
@@ -82,9 +95,10 @@ gh pr list --state merged --limit 100 --json url --jq '.[].url' | xargs gh cru
 
 Output mode auto-detects TTY:
 
-- **TTY**: human-readable, with the `* ` marker
-- **piped**: tab-separated `key:\tvalue` rows (gh script-mode convention)
-- **`--json`**: structured, with `is_you: true|false` per owner
+- **TTY**: human-readable with colored markers and column alignment
+- **piped**: tab-separated rows, no color (gh script-mode convention)
+- **`--json`**: structured per-PR object, one per line; `is_you` and
+  `is_unowned` flags on each owner row
 
 ## Flags
 
@@ -108,7 +122,14 @@ To build from source (Go ≥ 1.25):
 ```sh
 git clone https://github.com/laserlemon/gh-cru
 cd gh-cru
-go build -o gh-cru ./cmd/gh-cru
+go build -o gh-cru .
+```
+
+To see every visual variant of the output (markers, colors, edge cases)
+locally without hitting GitHub:
+
+```sh
+go run ./scripts/demo-output.go
 ```
 
 ## License
