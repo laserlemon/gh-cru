@@ -254,14 +254,14 @@ func sizeColor(text, bucket string, enabled bool) string {
 // riskColor paints the risk label and risk factor in their tier color.
 // Drives both the human-readable "low/medium/high" string and the
 // numeric multiplier (e.g. "4.000") so the eye reads them as one unit.
-func riskColor(text, level string, enabled bool) string {
+func riskColor(text string, risk cru.Risk, enabled bool) string {
 	if !enabled {
 		return text
 	}
-	switch level {
-	case "high":
+	switch risk {
+	case cru.RiskHigh:
 		return colorRiskHigh(text)
-	case "medium":
+	case cru.RiskMedium:
 		return colorRiskMedium(text)
 	default:
 		return colorRiskLow(text)
@@ -330,8 +330,8 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	fmt.Fprintf(w, "%s %s\n", label("Size label", color), sizeColor(s.Size.String(), s.Size.String(), color))
 	fmt.Fprintf(w, "%s %s\n", label("Size factor", color), sizeColor(fmt.Sprintf("%.3f", float64(s.Size)), s.Size.String(), color))
 	rl := s.Risk.String()
-	fmt.Fprintf(w, "%s %s\n", label("Risk label", color), riskColor(rl, rl, color))
-	fmt.Fprintf(w, "%s %s\n", label("Risk factor", color), riskColor(fmt.Sprintf("%.3f", s.Risk.Factor()), rl, color))
+	fmt.Fprintf(w, "%s %s\n", label("Risk label", color), riskColor(rl, s.Risk, color))
+	fmt.Fprintf(w, "%s %s\n", label("Risk factor", color), riskColor(fmt.Sprintf("%.3f", s.Risk.Factor()), s.Risk, color))
 	fmt.Fprintf(w, "%s %.3f\n", label("Normal CRU", color), s.CRU())
 	fmt.Fprintf(w, "%s %.3f\n", label("Total CRU", color), s.AuthorCRU())
 	if s.MyLogin != "" {
