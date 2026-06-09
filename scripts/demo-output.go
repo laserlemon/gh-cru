@@ -229,7 +229,7 @@ func main() {
 }
 
 func buildScore(c scenario) score.PRScore {
-	size := cru.SizeOf(c.LOC)
+	size := cru.CalculateSize(c.LOC)
 	sf := float64(size)
 	rf := c.Risk.Factor()
 	result := score.PRScore{

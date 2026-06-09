@@ -129,7 +129,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 	}
 
 	loc := pr.LOC()
-	size := cru.SizeOf(loc)
+	size := cru.CalculateSize(loc)
 	sf := float64(size)
 
 	result := PRScore{
