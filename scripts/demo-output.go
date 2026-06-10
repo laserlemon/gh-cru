@@ -124,7 +124,7 @@ func main() {
 			MyIdentities: []string{"@laserlemon"},
 		},
 		{
-			Name:          "8. high-risk PR (risk factor 4×)",
+			Name:          "8. high-risk PR (risk multiplier 4×)",
 			Repo:          "acme/payments",
 			Number:        77,
 			LOC:           42,
@@ -135,7 +135,7 @@ func main() {
 			},
 		},
 		{
-			Name:          "8b. medium-risk PR (risk factor 2×)",
+			Name:          "8b. medium-risk PR (risk multiplier 2×)",
 			Repo:          "acme/payments",
 			Number:        78,
 			LOC:           42,
@@ -231,7 +231,7 @@ func main() {
 func buildScore(c scenario) score.PRScore {
 	size := cru.CalculateSize(c.LOC)
 	sf := float64(size)
-	rf := c.Risk.Factor()
+	rf := c.Risk.Multiplier()
 	result := score.PRScore{
 		PR: ghc.PR{
 			Number: c.Number,

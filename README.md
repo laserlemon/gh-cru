@@ -27,7 +27,7 @@ gh pr list --repo owner/name --state merged --limit 50 --json \
 CRU is a bounded, anchored measure of PR review effort:
 
 ```
-CRU = size factor × ownership share × risk factor
+CRU = size factor × ownership share × risk multiplier
 ```
 
 - **size factor** is `2^(5·F(L) − 2.5)`, where `F(L)` is the PR's percentile
@@ -40,7 +40,7 @@ CRU = size factor × ownership share × risk factor
   A 1,000-line PR where 50 lines touch your team's code costs you 5% of the
   size factor. LOC the CODEOWNERS rules don't cover is attributed to a
   synthetic `unowned` owner so unowned work is never silently dropped.
-- **risk factor** is `1.0` by default. PRs labeled `risk:medium` get `2.0` and
+- **risk multiplier** is `1.0` by default. PRs labeled `risk:medium` get `2.0` and
   PRs labeled `risk:high` get `4.0` (same span as the difference between an S
   and an L by size). Configurable via `--high-risk-label` and `--medium-risk-label`;
   high wins when both match.
@@ -54,14 +54,14 @@ $ gh cru acme/web#1234
 
 acme/web#1234
 
-LOC          240
-Size label   XL
-Size factor  3.391
-Risk label   low
-Risk factor  1.000
-Normal CRU   3.391
-Total CRU    3.673
-Your CRU     1.695
+LOC              240
+Size label       XL
+Size factor      3.391
+Risk label       low
+Risk multiplier  1.000
+Normal CRU       3.391
+Total CRU        3.673
+Your CRU         1.695
 
    CODE OWNER               LOC  SHARE    CRU
 =  laserlemon                40  0.167  0.565

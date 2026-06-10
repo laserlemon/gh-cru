@@ -251,7 +251,7 @@ func sizeColor(text, bucket string, enabled bool) string {
 }
 
 // riskColor returns text colored by risk level (low → teal, high → red).
-// riskColor paints the risk label and risk factor in their tier color.
+// riskColor paints the risk label and risk multiplier in their tier color.
 // Drives both the human-readable "low/medium/high" string and the
 // numeric multiplier (e.g. "4.000") so the eye reads them as one unit.
 func riskColor(text string, risk cru.Risk, enabled bool) string {
@@ -282,14 +282,14 @@ func dim(s string, enabled bool) string {
 //
 //	owner/repo#N                 (always-on, color hashed by repo)
 //
-//	LOC          <n>
-//	Size label   <bucket>
-//	Size factor  <f>
-//	Risk label   <label>
-//	Risk factor  <r>
-//	Normal CRU   <c>
-//	Total CRU    <sum across owners; team review burden>
-//	Your CRU     <c>            (only when MyLogin is known)
+//	LOC              <n>
+//	Size label       <bucket>
+//	Size factor      <f>
+//	Risk label       <label>
+//	Risk multiplier  <r>
+//	Normal CRU       <c>
+//	Total CRU        <sum across owners; team review burden>
+//	Your CRU         <c>            (only when MyLogin is known)
 //
 //	CODE OWNER                       LOC  FACTOR    CRU
 //	  github/some-team                34  0.895  0.971
@@ -321,7 +321,7 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	heading := repoColor(repo) + prColor(fmt.Sprintf("#%d", s.PR.Number))
 	fmt.Fprintf(w, "%s\n\n", heading)
 
-	// Header block: %-12s pads labels to 12 chars (`Size factor` at 11 +
+	// Header block: %-16s pads labels to 16 chars (`Risk multiplier` at 15 +
 	// 1-space gap), matching the visual alignment in the user's mockup.
 	// Same on TTY and pipe. Labels render in the same gray used for table
 	// headers — `label` colorizes after padding so visible-width math
@@ -331,7 +331,7 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	fmt.Fprintf(w, "%s %s\n", label("Size factor", color), sizeColor(fmt.Sprintf("%.3f", float64(s.Size)), s.Size.String(), color))
 	rl := s.Risk.String()
 	fmt.Fprintf(w, "%s %s\n", label("Risk label", color), riskColor(rl, s.Risk, color))
-	fmt.Fprintf(w, "%s %s\n", label("Risk factor", color), riskColor(fmt.Sprintf("%.3f", s.Risk.Factor()), s.Risk, color))
+	fmt.Fprintf(w, "%s %s\n", label("Risk multiplier", color), riskColor(fmt.Sprintf("%.3f", s.Risk.Multiplier()), s.Risk, color))
 	fmt.Fprintf(w, "%s %.3f\n", label("Normal CRU", color), s.CRU())
 	fmt.Fprintf(w, "%s %.3f\n", label("Total CRU", color), s.AuthorCRU())
 	if s.MyLogin != "" {
@@ -342,12 +342,12 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	writeOwnerTable(w, s, isTTY, color, width)
 }
 
-// label pads a metadata label to 12 chars and applies the gray styling
+// label pads a metadata label to 16 chars and applies the gray styling
 // (dim, NOT underlined: labels are inline, unlike table column headers).
 // Padding happens before the ANSI escape so visible-width math (used by
 // terminals to align columns) is correct.
 func label(s string, enabled bool) string {
-	padded := fmt.Sprintf("%-12s", s)
+	padded := fmt.Sprintf("%-16s", s)
 	if !enabled {
 		return padded
 	}
@@ -544,12 +544,12 @@ func displayOwner(s string) string {
 // jq/duckdb/Python downstream can `==`-compare without surprises.
 func JSON(w io.Writer, repo string, s score.PRScore) error {
 	type ownerJSON struct {
-		Name           *string `json:"name"`            // null when type=="unowned"
-		Type           string  `json:"type"`            // "user" | "team" | "unowned"
+		Name           *string `json:"name"` // null when type=="unowned"
+		Type           string  `json:"type"` // "user" | "team" | "unowned"
 		OwnedLOC       int     `json:"owned_loc"`
 		OwnershipShare float64 `json:"ownership_share"`
 		RequestedCRU   float64 `json:"requested_cru"`
-		IsYou          bool    `json:"is_you"`          // direct @login or team-membership match
+		IsYou          bool    `json:"is_you"` // direct @login or team-membership match
 	}
 	type youJSON struct {
 		Login          string  `json:"login"`
@@ -558,25 +558,25 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		RequestedCRU   float64 `json:"requested_cru"`
 	}
 	type out struct {
-		Repo          string      `json:"repo"`
-		Number        int         `json:"number"`
-		Title         string      `json:"title"`
-		Author        string      `json:"author"`
-		State         string      `json:"state"`
-		Additions     int         `json:"additions"`
-		Deletions     int         `json:"deletions"`
-		LOC           int         `json:"loc"`
-		Files         int         `json:"files"`
-		SizeLabel     string      `json:"size_label"`
-		SizeFactor    float64     `json:"size_factor"`
-		RiskLabel     string      `json:"risk_label"`
-		RiskFactor    float64     `json:"risk_factor"`
-		NormalCRU     float64     `json:"normal_cru"` // size × risk
-		TotalCRU      float64     `json:"total_cru"`  // Σ per-owner; review burden
-		You          *youJSON    `json:"you,omitempty"`
-		MyIdentities []string    `json:"my_identities,omitempty"`
-		Owners       []ownerJSON `json:"owners"`
-		UnownedLOC   int         `json:"unowned_loc"`
+		Repo           string      `json:"repo"`
+		Number         int         `json:"number"`
+		Title          string      `json:"title"`
+		Author         string      `json:"author"`
+		State          string      `json:"state"`
+		Additions      int         `json:"additions"`
+		Deletions      int         `json:"deletions"`
+		LOC            int         `json:"loc"`
+		Files          int         `json:"files"`
+		SizeLabel      string      `json:"size_label"`
+		SizeFactor     float64     `json:"size_factor"`
+		RiskLabel      string      `json:"risk_label"`
+		RiskMultiplier float64     `json:"risk_multiplier"`
+		NormalCRU      float64     `json:"normal_cru"` // size × risk
+		TotalCRU       float64     `json:"total_cru"`  // Σ per-owner; review burden
+		You            *youJSON    `json:"you,omitempty"`
+		MyIdentities   []string    `json:"my_identities,omitempty"`
+		Owners         []ownerJSON `json:"owners"`
+		UnownedLOC     int         `json:"unowned_loc"`
 	}
 	owners := make([]ownerJSON, 0)
 	mySet := makeIdentitySet(s.MyIdentities)
@@ -587,9 +587,8 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 	for _, o := range s.SortedOwners() {
 		isUnowned := o.Owner == score.UnownedOwnerLabel
 		ownerKey := strings.ToLower(o.Owner)
-		isYou := !isUnowned && (
-			(myLoginKey != "" && ownerKey == myLoginKey) ||
-				mySet[ownerKey])
+		isYou := !isUnowned && ((myLoginKey != "" && ownerKey == myLoginKey) ||
+			mySet[ownerKey])
 
 		// type: "unowned" for the synthetic row, "team" for slug-style
 		// "@org/team" identifiers, "user" otherwise. CODEOWNERS doesn't
@@ -630,25 +629,25 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		}
 	}
 	o := out{
-		Repo:         repo,
-		Number:       s.PR.Number,
-		Title:        s.PR.Title,
-		Author:       s.PR.Author,
-		State:        s.PR.State,
-		Additions:    s.PR.Additions,
-		Deletions:    s.PR.Deletions,
-		LOC:          s.LOC,
-		Files:        s.PR.Files,
-		SizeLabel:    s.Size.String(),
-		SizeFactor:   round6(float64(s.Size)),
-		RiskLabel:    s.Risk.String(),
-		RiskFactor:   round6(s.Risk.Factor()),
-		NormalCRU:    round6(s.CRU()),
-		TotalCRU:     round6(s.AuthorCRU()),
-		You:          you,
-		MyIdentities: s.MyIdentities,
-		Owners:       owners,
-		UnownedLOC:   s.UnownedChanges,
+		Repo:           repo,
+		Number:         s.PR.Number,
+		Title:          s.PR.Title,
+		Author:         s.PR.Author,
+		State:          s.PR.State,
+		Additions:      s.PR.Additions,
+		Deletions:      s.PR.Deletions,
+		LOC:            s.LOC,
+		Files:          s.PR.Files,
+		SizeLabel:      s.Size.String(),
+		SizeFactor:     round6(float64(s.Size)),
+		RiskLabel:      s.Risk.String(),
+		RiskMultiplier: round6(s.Risk.Multiplier()),
+		NormalCRU:      round6(s.CRU()),
+		TotalCRU:       round6(s.AuthorCRU()),
+		You:            you,
+		MyIdentities:   s.MyIdentities,
+		Owners:         owners,
+		UnownedLOC:     s.UnownedChanges,
 	}
 	enc := json.NewEncoder(w)
 	// Compact NDJSON: one PR per line, no internal newlines. This makes
@@ -666,4 +665,3 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 func round6(x float64) float64 {
 	return math.Round(x*1e6) / 1e6
 }
-

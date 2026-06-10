@@ -69,7 +69,7 @@ type PRScore struct {
 // CRU returns the owner-agnostic CRU: Size × Risk. This is the
 // "what size review is this?" score - independent of who owns what.
 func (s PRScore) CRU() float64 {
-	return float64(s.Size) * s.Risk.Factor()
+	return float64(s.Size) * s.Risk.Multiplier()
 }
 
 // AuthorCRU returns the total review burden the PR places on the team:
@@ -224,7 +224,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 			Owner:    owner,
 			OwnedLOC: ownedLOC,
 			Share:    share,
-			Score:    sf * share * risk.Factor(),
+			Score:    sf * share * risk.Multiplier(),
 		}
 	}
 
@@ -243,7 +243,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 			Owner:    UnownedOwnerLabel,
 			OwnedLOC: result.UnownedChanges,
 			Share:    share,
-			Score:    sf * share * risk.Factor(),
+			Score:    sf * share * risk.Multiplier(),
 		}
 		// Append to owner order so the unowned row renders LAST in the
 		// table (after all real owners).
@@ -253,7 +253,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 	if len(myIdentities) > 0 {
 		result.MyOwnedLOC = myOwnedLOC
 		result.MyShare = float64(myOwnedLOC) / float64(denom)
-		result.MyCRU = sf * result.MyShare * risk.Factor()
+		result.MyCRU = sf * result.MyShare * risk.Multiplier()
 	}
 
 	return result
