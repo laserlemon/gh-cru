@@ -56,18 +56,18 @@ acme/web#1234
 
 LOC              240
 Size label       XL
-Size factor      3.391
+Size factor      3.065
 Risk label       low
 Risk multiplier  1.000
-Normal CRU       3.391
-Total CRU        3.673
-Your CRU         1.695
+Normal CRU       3.065
+Total CRU        3.321
+Your CRU         1.533
 
    CODE OWNER               LOC  SHARE    CRU
-=  laserlemon                40  0.167  0.565
-*  acme/big-orca             80  0.333  1.130
-•  acme/payments-reviewers  100  0.417  1.413
-~  unowned                   40  0.167  0.565
+=  laserlemon                40  0.167  0.511
+*  acme/big-orca             80  0.333  1.022
+•  acme/payments-reviewers  100  0.417  1.277
+~  unowned                   40  0.167  0.511
 ```
 
 A 1-character marker in the gutter classifies each row:
