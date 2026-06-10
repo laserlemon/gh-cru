@@ -189,7 +189,3 @@ locally without hitting GitHub:
 ```sh
 go run ./scripts/demo-output.go
 ```
-
-## License
-
-MIT
