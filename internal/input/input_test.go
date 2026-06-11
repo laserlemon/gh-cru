@@ -196,7 +196,7 @@ func TestParse_JSONNoIdentityErrors(t *testing.T) {
 }
 
 func TestParse_JSONUrlWins(t *testing.T) {
-	// url present + number + repository — url should be authoritative.
+	// url present + number + repository: url should be authoritative.
 	stdin := strings.NewReader(`{"url":"https://github.com/a/b/pull/1","number":99,"repository":{"owner":"x","name":"y"}}`)
 	out, _, err := Parse([]string{"-"}, stdin, false, "", "")
 	if err != nil {

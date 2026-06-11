@@ -184,7 +184,7 @@ func main() {
 			MyIdentities: []string{"@laserlemon", "@acme/big-orca"},
 		},
 		{
-			Name:          "12. PR number color sample (same repo, different PRs — palette differentiates)",
+			Name:          "12. PR number color sample (same repo, different PRs, palette differentiates)",
 			Repo:          "acme/web",
 			Number:        9001,
 			LOC:           34,

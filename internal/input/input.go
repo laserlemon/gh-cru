@@ -113,7 +113,7 @@ func Parse(args []string, stdin io.Reader, stdinIsPipe bool, defOwner, defRepo s
 
 // parseStdin reads the full stdin payload and dispatches based on shape:
 // JSON array, NDJSON (one object per line), or a single multi-line JSON
-// object. Bare numeric or URL refs on stdin are NOT supported — that's
+// object. Bare numeric or URL refs on stdin are NOT supported; that's
 // a perpetual source of `xargs gh cru` surprise, and users who want it
 // can just `xargs` directly. Stdin is for JSON only.
 func parseStdin(r io.Reader, defOwner, defRepo string) ([]Input, error) {
@@ -130,7 +130,7 @@ func parseStdin(r io.Reader, defOwner, defRepo string) ([]Input, error) {
 		return parseJSONArray(trimmed, defOwner, defRepo)
 	case '{':
 		// Could be a single (possibly multi-line) JSON object OR NDJSON.
-		// Try whole-blob first — succeeds for pretty-printed `gh ... | jq .`
+		// Try whole-blob first; succeeds for pretty-printed `gh ... | jq .`
 		// output. Falls back to NDJSON when there's more than one object.
 		if obj, ok := tryDecodeSingleObject(trimmed); ok {
 			in, err := parseJSONObject(obj, defOwner, defRepo)
@@ -154,8 +154,8 @@ func tryDecodeSingleObject(raw []byte) ([]byte, bool) {
 	if err := dec.Decode(&probe); err != nil {
 		return nil, false
 	}
-	// Whatever's left after the first object decoding — only single-object
-	// payloads have nothing significant trailing.
+	// Whatever's left after the first object decoding (only single-object
+	// payloads have nothing significant trailing).
 	rest := bytes.TrimSpace(raw[dec.InputOffset():])
 	if len(rest) > 0 {
 		return nil, false
@@ -250,10 +250,10 @@ type jsonPR struct {
 // parseJSONObject turns one PR JSON entry into an Input. Identity
 // resolution priority:
 //
-//  1. url   — full https://github.com/owner/repo/pull/N URL (gh-canonical)
-//  2. repository.owner + .name + number — gh pr list shape
-//  3. repo + number — our shorthand ("owner/name")
-//  4. number alone — uses defOwner/defRepo from --repo or git context
+//  1. url:   full https://github.com/owner/repo/pull/N URL (gh-canonical)
+//  2. repository.owner + .name + number: gh pr list shape
+//  3. repo + number: our shorthand ("owner/name")
+//  4. number alone: uses defOwner/defRepo from --repo or git context
 //
 // JSON-supplied repo info ALWAYS overrides --repo and git context. Each
 // row may come from a different repo (typical with `gh pr list --search`
@@ -391,7 +391,7 @@ func previewBytes(b []byte) string {
 	return s
 }
 
-// StdinIsPipe is a small helper for callers that already hold os.Stdin —
+// StdinIsPipe is a small helper for callers that already hold os.Stdin:
 // returns true when it's not a TTY (i.e. piped or redirected).
 func StdinIsPipe(f *os.File) bool {
 	fi, err := f.Stat()

@@ -139,7 +139,7 @@ must appear BEFORE the "list" word so cobra picks them up:
   gh cru list --search "is:open updated:>2026-01-01"
 
 Empty result exits 0 with no output. A failing PR (deleted file, auth
-error) aborts the whole batch — use --limit and re-run with the failing
+error) aborts the whole batch; use --limit and re-run with the failing
 range narrowed to bisect.`,
 		SilenceUsage:       true,
 		DisableFlagParsing: true, // everything after "list" passes to gh pr list
@@ -160,8 +160,8 @@ func runView(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(inputs) == 0 {
-		// Help when called with no args AND no piped stdin — typical
-		// "I forgot how to use this" case.
+		// Help when called with no args AND no piped stdin (typical
+		// "I forgot how to use this" case).
 		if source == input.SourceNone {
 			return fmt.Errorf("nothing to score: pass a PR ref or pipe JSON to stdin (see --help)")
 		}
@@ -205,7 +205,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	args = extractRootFlags(args)
 
 	// gh pr list arg construction: copy user args, drop any --json /
-	// --jq the user provided (silently — see help text), tack on our
+	// --jq the user provided (silently; see help text), tack on our
 	// required --json field set.
 	forwarded := stripJSONFlags(args)
 	cmdArgs := append([]string{"pr", "list"}, forwarded...)
@@ -389,7 +389,7 @@ func stripJSONFlags(args []string) []string {
 		}
 		switch {
 		case a == "--json" || a == "--jq" || a == "-q":
-			// --json <value> or --jq <value> — consume next token too,
+			// --json <value> or --jq <value>: consume next token too,
 			// but only if it doesn't look like another flag.
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				skip = 1

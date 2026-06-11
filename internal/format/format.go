@@ -56,7 +56,7 @@ var (
 
 	// Risk colors, matched to conventional risk:* PR labels.
 	colorRiskLow    = ansi.ColorFunc("30+b")  // dark teal
-	colorRiskMedium = ansi.ColorFunc("214+b") // amber/orange — between teal and red on the heat axis
+	colorRiskMedium = ansi.ColorFunc("214+b") // amber/orange, between teal and red on the heat axis
 	colorRiskHigh   = ansi.ColorFunc("88+b")  // blood red
 
 	// Heading palette for multi-PR mode. Hashed by repo so all PRs from
@@ -139,7 +139,7 @@ var (
 
 	// PR-number palette for the `#N` portion of the heading. Hashed by
 	// PR number so the number gets its own deterministic color, distinct
-	// from the repo palette above. Same 68-color WCAG-safe pool — when
+	// from the repo palette above. Same 68-color WCAG-safe pool: when
 	// the repo hash and number hash land on the same color it's a rare
 	// collision the brain processes as "same family" without losing
 	// info.
@@ -324,7 +324,7 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	// Header block: %-16s pads labels to 16 chars (`Risk multiplier` at 15 +
 	// 1-space gap), matching the visual alignment in the user's mockup.
 	// Same on TTY and pipe. Labels render in the same gray used for table
-	// headers — `label` colorizes after padding so visible-width math
+	// headers; `label` colorizes after padding so visible-width math
 	// stays correct.
 	fmt.Fprintf(w, "%s %d\n", label("LOC", color), s.LOC)
 	fmt.Fprintf(w, "%s %s\n", label("Size label", color), sizeColor(s.Size.String(), s.Size.String(), color))

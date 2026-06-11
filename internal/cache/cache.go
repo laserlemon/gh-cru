@@ -9,7 +9,7 @@
 //	codeowners/<owner>/<repo>/<ref>/<etag>.codeowners
 //
 // One file per body, keyed by (ref, ETag). The ref segment partitions
-// the cache cleanly by git ref (commit SHA or branch name) — different
+// the cache cleanly by git ref (commit SHA or branch name): different
 // refs that happen to share a CODEOWNERS body still get their own entry,
 // which keeps the on-disk layout self-describing and rules out cross-ref
 // collisions. The resolver always issues a HEAD (up to 3 paths, one per

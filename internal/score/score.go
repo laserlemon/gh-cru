@@ -229,8 +229,8 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 	}
 
 	// Synthetic "unowned" owner: attribute the LOC that no CODEOWNERS rule
-	// matched. Without this, AuthorCRU under-counts review reality — those
-	// lines still need a reviewer, just not a CODEOWNERS-named one. With
+	// matched. Without this, AuthorCRU under-counts review reality (those
+	// lines still need a reviewer, just not a CODEOWNERS-named one). With
 	// it, AuthorCRU is always ≥ CRU(), with equality when ownership shares
 	// (real + unowned) sum to exactly 1.0.
 	//

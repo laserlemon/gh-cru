@@ -146,7 +146,7 @@ func (c *Client) AuthIdentities() (login string, identities []string, teamsOK bo
 	}
 	c.mu.Unlock()
 
-	// 1. /user — direct REST, sub-millisecond response, not worth caching.
+	// 1. /user: direct REST, sub-millisecond response, not worth caching.
 	var u struct {
 		Login string `json:"login"`
 	}
@@ -218,7 +218,7 @@ func (c *Client) CanListOrgTeams(org string) bool {
 		return v.(bool)
 	}
 	// HEAD via gh api: -X HEAD sends no body, -i would print response
-	// headers (we don't need them — exit code carries the verdict).
+	// headers (we don't need them; exit code carries the verdict).
 	_, _, err := gh.Exec("api", "-X", "HEAD", "orgs/"+org+"/teams")
 	readable := err == nil
 	c.orgReadable.Store(org, readable)
@@ -305,7 +305,7 @@ func (c *Client) FetchPRFiles(ref prref.Ref) ([]File, error) {
 
 // FetchCodeowners returns the parsed CODEOWNERS ruleset for the repo at
 // the given git ref (commit SHA or branch name). For PR scoring callers,
-// pass pr.CodeownersRef() — that returns merge_commit_sha for merged PRs
+// pass pr.CodeownersRef(): that returns merge_commit_sha for merged PRs
 // (stable historical evaluation) and the base branch name for open PRs
 // (live evaluation, matching GitHub's own behavior).
 //
@@ -330,7 +330,7 @@ func (c *Client) FetchCodeowners(owner, repo, ref string) (codeowners.Ruleset, b
 //  2. Local working tree, ONLY when target repo == cwd repo AND ref looks
 //     like a branch name (not a SHA) that matches the current branch.
 //     Merged-PR scoring (which uses merge_commit_sha) never short-circuits
-//     to local — we need the historical file at that exact commit.
+//     to local; we need the historical file at that exact commit.
 //  3. Per CODEOWNERS path (.github/CODEOWNERS, CODEOWNERS, docs/CODEOWNERS):
 //     HEAD to learn current ETag at ?ref=<ref>. If the disk cache already
 //     has a body for that ETag, use it (browser-style hit; handles

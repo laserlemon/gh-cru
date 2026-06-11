@@ -140,7 +140,7 @@ func TestJSONShapeIncludesUnowned(t *testing.T) {
 }
 
 // TestJSONShapeUsesOwnershipShare verifies the field is named
-// ownership_share (not ownership_factor — that was the old name and
+// ownership_share (not ownership_factor; that was the old name and
 // downstream consumers might still query it).
 func TestJSONShapeUsesOwnershipShare(t *testing.T) {
 	owners := []score.Ownership{
