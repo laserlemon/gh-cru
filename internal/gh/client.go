@@ -7,6 +7,7 @@ package gh
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -555,7 +556,7 @@ func decodeContentsResponse(resp *http.Response, endpoint string, rawFetch func(
 	switch meta.Encoding {
 	case "base64":
 		clean := strings.NewReplacer("\n", "", "\r", "", " ", "").Replace(meta.Content)
-		decoded, err := base64Decode(clean)
+		decoded, err := base64.StdEncoding.DecodeString(clean)
 		if err != nil {
 			return nil, "", fmt.Errorf("base64 decode %s: %w", endpoint, err)
 		}

@@ -119,28 +119,3 @@ func TestIsLikelyBranchName(t *testing.T) {
 		}
 	}
 }
-
-// TestBase64Decode verifies the helper that decodes the contents-API
-// base64 body (which uses standard encoding with potential newlines).
-func TestBase64Decode(t *testing.T) {
-	// "hello world" base64-encoded.
-	got, err := base64Decode("aGVsbG8gd29ybGQ=")
-	if err != nil {
-		t.Fatalf("base64Decode error: %v", err)
-	}
-	if string(got) != "hello world" {
-		t.Errorf("base64Decode = %q, want %q", got, "hello world")
-	}
-
-	// Contents API sometimes wraps lines at 60 chars; verify newlines are
-	// tolerated (Go stdlib's base64 doesn't tolerate them by default, so
-	// the helper must strip them).
-	wrapped := "aGVsbG8g\nd29ybGQ=\n"
-	got2, err := base64Decode(wrapped)
-	if err != nil {
-		t.Fatalf("base64Decode wrapped error: %v", err)
-	}
-	if string(got2) != "hello world" {
-		t.Errorf("base64Decode wrapped = %q, want %q", got2, "hello world")
-	}
-}
