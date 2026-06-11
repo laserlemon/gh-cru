@@ -6,8 +6,9 @@
 // FORCE_COLOR=1 → on regardless. Use FORCE_COLOR=1 to capture ANSI to a
 // file for comparison across themes.
 //
-// Each scenario is preceded by a `=== name ===` banner so you can scan the
-// output and see every variant in one shot.
+// This is a developer convenience: it lives outside the package (its own
+// main) so it doesn't ship with the release. Whenever you touch
+// internal/format, run this and eyeball every variant.
 package main
 
 import (
@@ -16,10 +17,10 @@ import (
 
 	"github.com/cli/go-gh/v2/pkg/term"
 
+	"github.com/laserlemon/cru"
 	"github.com/laserlemon/gh-cru/internal/format"
 	ghc "github.com/laserlemon/gh-cru/internal/gh"
 	"github.com/laserlemon/gh-cru/internal/score"
-	"github.com/laserlemon/cru"
 )
 
 // scenario builds one PRScore from explicit inputs. Easier than
@@ -44,9 +45,12 @@ type owner struct {
 }
 
 func main() {
+	// One scenario per distinct code path. Each subsequent scenario
+	// stacks one new feature on the prior, so a glance down the page is
+	// also a tour of the formatter's responsibilities.
 	cases := []scenario{
 		{
-			Name:          "1. typical PR: single owner, no overlap, no unowned (clean case)",
+			Name:          "single owner, no overlap (the trivial path)",
 			Repo:          "acme/web",
 			Number:        1234,
 			LOC:           34,
@@ -55,19 +59,14 @@ func main() {
 			Owners:        []owner{{Name: "@acme/web-team", LOC: 34}},
 		},
 		{
-			Name:          "2. multiple owners with overlap (total > normal)",
-			Repo:          "acme/web",
-			Number:        1235,
-			LOC:           80,
+			Name:          "no CODEOWNERS file at all (whole PR rendered as ~ unowned)",
+			Repo:          "acme/sandbox",
+			Number:        42,
+			LOC:           48,
 			Risk:          cru.RiskLow,
-			HasCodeowners: true,
-			Owners: []owner{
-				{Name: "@acme/auth-team", LOC: 80},
-				{Name: "@acme/web-team", LOC: 80},
-			},
 		},
 		{
-			Name:          "3. owners + unowned LOC (the new case we're shipping)",
+			Name:          "owners + partial unowned LOC (mixed coverage)",
 			Repo:          "acme/web",
 			Number:        1236,
 			LOC:           200,
@@ -80,95 +79,19 @@ func main() {
 			UnownedLOC: 30,
 		},
 		{
-			Name:          "4. CODEOWNERS exists but no rule matches (entirely unowned, was 0 CRU before)",
+			Name:          "multiple owners with overlap (Total CRU exceeds Normal CRU)",
 			Repo:          "acme/web",
-			Number:        1237,
-			LOC:           75,
-			Risk:          cru.RiskLow,
-			HasCodeowners: true,
-			UnownedLOC:    75,
-		},
-		{
-			Name:          "5. no CODEOWNERS file at all (whole PR rendered as ~ unowned)",
-			Repo:          "acme/sandbox",
-			Number:        42,
-			LOC:           48,
-			Risk:          cru.RiskLow,
-		},
-		{
-			Name:          "6. you're on one of the teams (* blue marker)",
-			Repo:          "acme/web",
-			Number:        1238,
-			LOC:           90,
+			Number:        1235,
+			LOC:           80,
 			Risk:          cru.RiskLow,
 			HasCodeowners: true,
 			Owners: []owner{
-				{Name: "@acme/web-team", LOC: 30},
-				{Name: "@acme/big-orca", LOC: 60},
-			},
-			MyLogin:      "laserlemon",
-			MyIdentities: []string{"@laserlemon", "@acme/big-orca"},
-		},
-		{
-			Name:          "7. direct @login match (= blue+bold marker, distinct from team match)",
-			Repo:          "acme/web",
-			Number:        1239,
-			LOC:           50,
-			Risk:          cru.RiskLow,
-			HasCodeowners: true,
-			Owners: []owner{
-				{Name: "@acme/web-team", LOC: 30},
-				{Name: "@laserlemon", LOC: 20},
-			},
-			MyLogin:      "laserlemon",
-			MyIdentities: []string{"@laserlemon"},
-		},
-		{
-			Name:          "8. high-risk PR (risk multiplier 4×)",
-			Repo:          "acme/payments",
-			Number:        77,
-			LOC:           42,
-			Risk:          cru.RiskHigh,
-			HasCodeowners: true,
-			Owners: []owner{
-				{Name: "@acme/payments-team", LOC: 42},
+				{Name: "@acme/auth-team", LOC: 80},
+				{Name: "@acme/web-team", LOC: 80},
 			},
 		},
 		{
-			Name:          "8b. medium-risk PR (risk multiplier 2×)",
-			Repo:          "acme/payments",
-			Number:        78,
-			LOC:           42,
-			Risk:          cru.RiskMedium,
-			HasCodeowners: true,
-			Owners: []owner{
-				{Name: "@acme/payments-team", LOC: 42},
-			},
-		},
-		{
-			Name:          "9. extra-small PR (XS bucket, low CRU)",
-			Repo:          "acme/web",
-			Number:        1240,
-			LOC:           3,
-			Risk:          cru.RiskLow,
-			HasCodeowners: true,
-			Owners:        []owner{{Name: "@acme/web-team", LOC: 3}},
-		},
-		{
-			Name:          "10. extra-large PR (XL bucket, high CRU)",
-			Repo:          "acme/web",
-			Number:        1241,
-			LOC:           650,
-			Risk:          cru.RiskLow,
-			HasCodeowners: true,
-			Owners: []owner{
-				{Name: "@acme/web-team", LOC: 400},
-				{Name: "@acme/auth-team", LOC: 200},
-			},
-			UnownedLOC: 50,
-		},
-		{
-			Name:          "11. mix of everything: direct match, team match, other, unowned, high risk",
+			Name:          "everything at once: direct @login, team, other, unowned, high risk",
 			Repo:          "acme/payments",
 			Number:        78,
 			LOC:           240,
@@ -184,29 +107,11 @@ func main() {
 			MyIdentities: []string{"@laserlemon", "@acme/big-orca"},
 		},
 		{
-			Name:          "12. PR number color sample (same repo, different PRs, palette differentiates)",
-			Repo:          "acme/web",
-			Number:        9001,
-			LOC:           34,
-			Risk:          cru.RiskLow,
-			HasCodeowners: true,
-			Owners:        []owner{{Name: "@acme/web-team", LOC: 34}},
-		},
-		{
-			Name:          "13. same repo as #12, different PR number (different #N color)",
-			Repo:          "acme/web",
-			Number:        9002,
-			LOC:           34,
-			Risk:          cru.RiskLow,
-			HasCodeowners: true,
-			Owners:        []owner{{Name: "@acme/web-team", LOC: 34}},
-		},
-		{
-			Name:          "14. different repo, same PR number as #2 (different repo color)",
+			Name:          "different repo: heading color hash differentiates from prior cases",
 			Repo:          "acme/api",
 			Number:        1235,
 			LOC:           34,
-			Risk:          cru.RiskLow,
+			Risk:          cru.RiskMedium,
 			HasCodeowners: true,
 			Owners:        []owner{{Name: "@acme/api-team", LOC: 34}},
 		},
