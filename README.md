@@ -9,7 +9,7 @@ gh extension install laserlemon/gh-cru
 gh cru 1234
 gh cru owner/repo#1234
 gh cru https://github.com/owner/repo/pull/1234
-gh cru cli/cli#13612 cli/cli#13599 cli/cli#13597
+gh cru acme/web#1234 acme/web#1235 acme/web#1236
 
 # Score every PR that matches a "gh pr list" query.
 gh cru list --repo owner/name --state merged --limit 50
@@ -110,7 +110,7 @@ pipe them in:
 gh cru 1234 1235 1236 1237
 
 # Cross-repo: each ref carries its own owner/name.
-gh cru cli/cli#13612 laserlemon/cru#1
+gh cru acme/web#1234 acme/api#42
 ```
 
 ### `gh cru list`

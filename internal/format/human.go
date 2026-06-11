@@ -28,8 +28,8 @@ import (
 //	Your CRU         <c>            (only when MyLogin is known)
 //
 //	CODE OWNER                       LOC  FACTOR    CRU
-//	  github/some-team                34  0.895  0.971
-//	* github/team-you-own              4  0.105  0.114
+//	  acme/some-team                  34  0.895  0.971
+//	* acme/team-you-own                4  0.105  0.114
 //
 //	Calculating your personal CRU requires read:org authorization to
 //	read your team memberships.   (only when teams couldn't be enumerated)

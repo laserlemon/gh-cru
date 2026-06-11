@@ -117,7 +117,7 @@ type Ownership struct {
 // myLogin is the authenticated user's GitHub @login (no leading @); empty
 // when running without personal scoring. myIdentities, when non-empty, are
 // the CODEOWNERS-compatible identity strings (e.g. ["@laserlemon",
-// "@github/justice-league"]) used to compute MyCRU. Pass nil to skip
+// "@acme/justice-league"]) used to compute MyCRU. Pass nil to skip
 // personal scoring.
 func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLabels []string, mediumRiskLabels []string, myLogin string, myIdentities []string) PRScore {
 	risk := cru.RiskLow
