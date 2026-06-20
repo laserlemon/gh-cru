@@ -1,16 +1,17 @@
 // Command gh-cru scores GitHub pull requests using the Code Review Unit
 // formula (https://github.com/laserlemon/cru).
 //
-// Subcommands:
+// Subcommands mirror the popular `gh pr` commands:
 //
-//	gh cru view  [flags] <pr-ref>... | -    Score specific PRs (default)
-//	gh cru list  <gh pr list flags>          Score the result of gh pr list
+//	gh cru view  [<number> | <url> | <branch>]   Score one PR (mirrors gh pr view)
+//	gh cru list  <gh pr list flags>              Score every PR gh pr list returns
 //
-// `gh cru` with no subcommand is an alias for `gh cru view`, so existing
-// invocations (bare numbers, URLs, xargs pipelines) work unchanged.
+// `gh cru` with no subcommand is an alias for `gh cru view`, so `gh cru`
+// (current branch), `gh cru 1234`, and `gh cru my-branch` all work.
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,6 +37,8 @@ var (
 	noPersonalFlag       bool
 	highRiskLabelsFlag   []string // any matching label triggers high risk (4×); default ["risk:high"]
 	mediumRiskLabelsFlag []string // any matching label triggers medium risk (2×); default ["risk:medium"]. High wins over medium.
+	webFlag              bool     // gh pr view --web; rejected by gh cru (hidden, handled in runView)
+	commentsFlag         bool     // gh pr view --comments; rejected by gh cru (hidden, handled in runView)
 )
 
 func main() {
@@ -52,26 +55,27 @@ func newRootCmd() *cobra.Command {
 		Short: "Score GitHub PRs using the Code Review Unit (CRU) formula",
 		Long: `Score GitHub pull requests using the Code Review Unit formula.
 
-Subcommands:
+Subcommands mirror the popular "gh pr" commands:
 
-  gh cru view  Score specific PRs (the default; alias of the bare command)
+  gh cru view  Score one PR (mirrors "gh pr view"; the default, alias of the bare command)
   gh cru list  Run "gh pr list" and score every PR it returns
 
-Run "gh cru view --help" for details on PR refs, stdin, and JSON input.`,
+Run "gh cru view --help" for the PR argument forms gh cru view accepts.`,
 		SilenceUsage: true,
-		// Root delegates to view when called with positional args (or "-"
-		// on stdin). This preserves "gh cru 123" and "gh pr list ... |
-		// gh cru" without forcing users to type the subcommand.
-		RunE:               runView,
-		DisableAutoGenTag:  true,
-		Args:               cobra.ArbitraryArgs,
-		SilenceErrors:      false,
-		TraverseChildren:   false,
+		// Root delegates to view, so the bare command mirrors "gh pr view"
+		// with no subcommand: "gh cru" scores the current branch's PR,
+		// "gh cru 1234" / "gh cru my-branch" score a specific one. Root keeps
+		// normal flag parsing (so "gh cru --json 1234" strips --json for us);
+		// the view subcommand disables it to forward unknown flags to gh pr
+		// view. runView handles both arg shapes.
+		RunE:              runView,
+		DisableAutoGenTag: true,
+		Args:              cobra.ArbitraryArgs,
 	}
 	root.PersistentFlags().StringVarP(&repoFlag, "repo", "R", "",
-		"Default repo for bare PR numbers (owner/name)")
+		"Default repo for the PR (owner/name)")
 	root.PersistentFlags().BoolVar(&jsonFlag, "json", false,
-		"Emit one JSON object per PR (NDJSON)")
+		"Emit the score as JSON")
 	root.PersistentFlags().BoolVar(&noOwnersFlag, "skip-ownership", false,
 		"Skip CODEOWNERS lookups; treat ownership as 1.0 (size×risk only)")
 	root.PersistentFlags().BoolVar(&noPersonalFlag, "skip-personal", false,
@@ -81,6 +85,16 @@ Run "gh cru view --help" for details on PR refs, stdin, and JSON input.`,
 	root.PersistentFlags().StringSliceVar(&mediumRiskLabelsFlag, "medium-risk-label", []string{"risk:medium"},
 		"PR label(s) that mark medium risk (2× multiplier). Repeat or comma-separate for multiple. High wins if both match")
 
+	// gh pr view's --web/--comments don't fit a score. Register them hidden
+	// on root so the bare command ("gh cru 1234 --web") doesn't die with
+	// cobra's generic "unknown flag"; runView checks the parsed bools and
+	// rejects with a message explaining why. The view subcommand uses
+	// DisableFlagParsing, so its path catches them in stripViewFlags instead.
+	root.PersistentFlags().BoolVarP(&webFlag, "web", "w", false, "")
+	root.PersistentFlags().BoolVarP(&commentsFlag, "comments", "c", false, "")
+	_ = root.PersistentFlags().MarkHidden("web")
+	_ = root.PersistentFlags().MarkHidden("comments")
+
 	root.AddCommand(newViewCmd())
 	root.AddCommand(newListCmd())
 	return root
@@ -88,32 +102,36 @@ Run "gh cru view --help" for details on PR refs, stdin, and JSON input.`,
 
 func newViewCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "view [flags] <pr-ref>... | -",
-		Short: "Score specific pull requests by ref, URL, or piped JSON",
-		Long: `Score one or more GitHub pull requests.
+		Use:   "view [<number> | <url> | <branch>]",
+		Short: "Score one pull request (mirrors `gh pr view`)",
+		Long: `Score one GitHub pull request, mirroring "gh pr view".
 
-A <pr-ref> can be:
+The PR argument takes the same forms "gh pr view" accepts:
 
-  123                                     bare number; --repo or git context required
-  owner/name#123                          shorthand
+  (none)                                  the PR for the current branch
+  123                                     bare number; --repo or git context
+  my-feature-branch                       a branch name
   https://github.com/owner/name/pull/123  full URL
-  -                                       read JSON from stdin
 
-Stdin JSON accepts a single object, a JSON array, or NDJSON (one object per
-line). Each object may carry just a ref (url, repository, number) or include
-pre-fetched scoring fields (additions, deletions, files, labels, mergeCommit,
-…) to skip the PR API call. JSON-supplied repo info always overrides --repo.
+gh cru shells out to "gh pr view" to resolve and fetch the PR, then scores
+it. A few "gh pr view" flags are intercepted because they don't fit a score:
+
+  --json is forced to the field set gh cru needs (your --json controls
+    gh cru's OWN output instead, same as "gh cru list").
+  --jq/-q and --template/-t are dropped (they format the inner JSON we consume).
+  --web/-w and --comments/-c are rejected (gh cru produces a score, not a view).
+  --repo/-R is honored and forwarded.
 
 Examples:
 
-  gh cru 1234                             score one PR
-  gh cru owner/repo#1234 other/repo#9     score across repos
-  gh pr list --state merged --limit 10 \
-    --json url,number,repository,additions,deletions,changedFiles,baseRefName,mergeCommit,labels,author,state,files \
-    | gh cru view -                       pre-fetched scoring via pipe`,
-		SilenceUsage: true,
-		Args:         cobra.ArbitraryArgs,
-		RunE:         runView,
+  gh cru                          score the current branch's PR
+  gh cru 1234                     score one PR by number
+  gh cru my-feature-branch        score the PR for a branch
+  gh cru --repo owner/name 1234   score a PR in another repo
+  gh cru --json 1234              emit the score as JSON`,
+		SilenceUsage:       true,
+		DisableFlagParsing: true, // forward unknown flags to gh pr view; parse ours by hand
+		RunE:               runView,
 	}
 }
 
@@ -147,32 +165,151 @@ range narrowed to bisect.`,
 	}
 }
 
-// runView is the workhorse: scores everything in args + stdin against the
-// shared flag values. Called by both `gh cru` (root alias) and `gh cru view`.
+// runView mirrors `gh pr view`: it resolves a single PR (by number, URL,
+// branch, or the current branch when no arg is given), fetches the scoring
+// fields via `gh pr view --json`, and scores the result. Called by both
+// `gh cru` (root alias) and `gh cru view`.
+//
+// Root parses flags normally, so args reaching runView from the bare command
+// have gh-cru's flags already stripped. The view subcommand uses
+// DisableFlagParsing, so its args still carry them; extractRootFlags handles
+// both (it's a no-op when there's nothing left to find). Whatever positional
+// remains, plus any non-gh-cru flags, forward to `gh pr view`.
 func runView(cmd *cobra.Command, args []string) error {
-	defOwner, defRepo := defaultRepo()
+	// Reject --web/--comments on the bare-command path, where root parsed
+	// them into these bools. (The view subcommand's DisableFlagParsing path
+	// catches them in stripViewFlags instead, with the same messages.)
+	if webFlag {
+		return fmt.Errorf("--web is not supported: gh cru produces a CRU score, not a browser view")
+	}
+	if commentsFlag {
+		return fmt.Errorf("--comments is not supported: gh cru produces a CRU score, not a comment thread")
+	}
 
-	// Stdin handling: literal "-" in args, or auto-detect when args are
-	// otherwise empty and stdin is a pipe (non-TTY).
-	stdinIsPipe := input.StdinIsPipe(os.Stdin)
-	inputs, source, err := input.Parse(args, os.Stdin, stdinIsPipe, defOwner, defRepo)
+	// Pull gh-cru's own flags out of the raw args (harmless when root
+	// already parsed them: nothing matches, everything passes through).
+	args = extractRootFlags(args)
+
+	// Intercept the gh-pr-view flags that don't fit a score: force --json,
+	// drop --jq/--template, reject --web/--comments. Leaves --repo and the
+	// positional ref in place to forward.
+	forwarded, err := stripViewFlags(args)
+	if err != nil {
+		return err
+	}
+
+	// On the bare command ("gh cru 1234 --repo o/r"), root parses --repo as
+	// its own registered flag, so it's already stripped from args and lives
+	// in repoFlag. The view subcommand (DisableFlagParsing) leaves --repo in
+	// the raw args instead. Re-inject it for gh pr view only when it didn't
+	// survive in the forwarded args, so both entry paths reach gh identically
+	// and neither double-passes it.
+	if repoFlag != "" && !hasRepoFlag(forwarded) {
+		forwarded = append(forwarded, "--repo", repoFlag)
+	}
+
+	// gh pr view <ref?> --json <our fields>. A missing ref is fine: gh pr
+	// view with no positional resolves the current branch's PR.
+	cmdArgs := append([]string{"pr", "view"}, forwarded...)
+	cmdArgs = append(cmdArgs, "--json", strings.Join(listJSONFields, ","))
+
+	out, err := runGH(cmdArgs)
+	if err != nil {
+		return err
+	}
+	return scoreJSON(out)
+}
+
+// hasRepoFlag reports whether a --repo/-R flag (in any of its spellings) is
+// already present in an arg slice.
+func hasRepoFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--repo" || a == "-R" ||
+			strings.HasPrefix(a, "--repo=") || strings.HasPrefix(a, "-R=") {
+			return true
+		}
+	}
+	return false
+}
+
+// runGH runs `gh <args>` and returns stdout, surfacing gh's own stderr
+// directly so auth/resolution errors reach the user unmodified.
+func runGH(args []string) ([]byte, error) {
+	gh := exec.Command("gh", args...)
+	gh.Stderr = os.Stderr
+	out, err := gh.Output()
+	if err != nil {
+		return nil, fmt.Errorf("gh %s: %w", strings.Join(args[:2], " "), err)
+	}
+	return out, nil
+}
+
+// stripViewFlags filters an arg slice headed for `gh pr view`, applying
+// gh-cru's interception rules:
+//
+//   - --json / -q/--jq / -t/--template are dropped: gh-cru forces its own
+//     --json field set, so a user-supplied output-format flag would either
+//     be overridden (--json) or operate on fields we replaced (--jq/-t). A
+//     user's --json on gh cru itself controls gh-cru's OWN output and is
+//     consumed earlier by extractRootFlags, not here.
+//   - --web/-w and --comments/-c are rejected with an error: gh cru produces
+//     a score, not a browser view or a comment thread, so silently dropping
+//     them would hide that the user asked for something gh cru can't do.
+//
+// Everything else (the positional ref, --repo/-R, any other gh pr view flag)
+// passes through unchanged.
+func stripViewFlags(args []string) ([]string, error) {
+	out := make([]string, 0, len(args))
+	skip := 0
+	for i, a := range args {
+		if skip > 0 {
+			skip--
+			continue
+		}
+		switch {
+		case a == "--web" || a == "-w":
+			return nil, fmt.Errorf("--web is not supported: gh cru produces a CRU score, not a browser view")
+		case a == "--comments" || a == "-c":
+			return nil, fmt.Errorf("--comments is not supported: gh cru produces a CRU score, not a comment thread")
+		case a == "--json" || a == "--jq" || a == "-q" || a == "--template" || a == "-t":
+			// Consume a following value token when present (--json fields).
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				skip = 1
+			}
+		case strings.HasPrefix(a, "--json=") || strings.HasPrefix(a, "--jq=") ||
+			strings.HasPrefix(a, "-q=") || strings.HasPrefix(a, "--template=") ||
+			strings.HasPrefix(a, "-t="):
+			// --flag=value form, nothing trailing to skip.
+		default:
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
+// scoreJSON parses gh JSON output (a single object from gh pr view, or an
+// array / NDJSON from gh pr list) into Inputs and scores each one. Shared by
+// runView and runList so the scoring engine lives in exactly one place.
+func scoreJSON(jsonOut []byte) error {
+	trimmed := strings.TrimSpace(string(jsonOut))
+	if trimmed == "" || trimmed == "[]" {
+		// Empty result (e.g. gh pr list matched nothing) is success.
+		return nil
+	}
+
+	defOwner, defRepo := defaultRepo()
+	inputs, _, err := input.Parse(nil, bytes.NewReader(jsonOut), true, defOwner, defRepo)
 	if err != nil {
 		return err
 	}
 	if len(inputs) == 0 {
-		// Help when called with no args AND no piped stdin (typical
-		// "I forgot how to use this" case).
-		if source == input.SourceNone {
-			return fmt.Errorf("nothing to score: pass a PR ref or pipe JSON to stdin (see --help)")
-		}
-		return nil // empty pipe = no-op success
+		return nil
 	}
 
 	client, err := ghc.NewClient()
 	if err != nil {
 		return err
 	}
-
 	myLogin, myIdentities, teamsOK := resolveMe(client)
 
 	exitErr := 0
@@ -194,7 +331,7 @@ func runView(cmd *cobra.Command, args []string) error {
 }
 
 // runList shells out to `gh pr list`, forces the JSON field set we need,
-// then pipes the output into the scoring path.
+// then scores the output.
 //
 // `list` uses DisableFlagParsing so the user can pass any `gh pr list`
 // flag without cobra trying to interpret it. The catch: cobra also stops
@@ -211,37 +348,13 @@ func runList(cmd *cobra.Command, args []string) error {
 	cmdArgs := append([]string{"pr", "list"}, forwarded...)
 	cmdArgs = append(cmdArgs, "--json", strings.Join(listJSONFields, ","))
 
-	gh := exec.Command("gh", cmdArgs...)
-	gh.Stderr = os.Stderr // surface gh's own errors directly
-	out, err := gh.Output()
+	out, err := runGH(cmdArgs)
 	if err != nil {
-		return fmt.Errorf("gh pr list: %w", err)
+		return err
 	}
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" || trimmed == "[]" {
-		// Empty result is success, no output.
-		return nil
-	}
-
-	// Hand off to runView with the JSON payload as if the user had typed
-	// `gh cru view -`. We pipe the captured bytes through os.Stdin so
-	// input.Parse sees them; swapping os.Stdin is simpler than plumbing
-	// a custom reader through the input package.
-	r, w, err := os.Pipe()
-	if err != nil {
-		return fmt.Errorf("pipe: %w", err)
-	}
-	go func() {
-		_, _ = w.Write(out)
-		_ = w.Close()
-	}()
-	origStdin := os.Stdin
-	os.Stdin = r
-	defer func() {
-		os.Stdin = origStdin
-		_ = r.Close()
-	}()
-	return runView(cmd, []string{"-"})
+	// gh pr list emits a JSON array; scoreJSON handles array, NDJSON, and
+	// the empty-result case uniformly with the view path.
+	return scoreJSON(out)
 }
 
 // extractRootFlags pulls gh-cru's persistent root flags out of an

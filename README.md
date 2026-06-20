@@ -1,25 +1,25 @@
-# gh-cru
+# laserlemon/gh-cru
 
-A `gh` extension to measure pull requests in Code Review Units (CRU).
+A `gh` extension to measure pull requests in Code Review Units ([CRU](https://github.com/laserlemon/cru)).
+
+[![Made by laserlemon](https://img.shields.io/badge/laser-lemon-fc0?style=flat-square)](https://github.com/laserlemon)
+[![Latest tag](https://img.shields.io/github/v/tag/laserlemon/gh-cru?style=flat-square&label=tag)](https://github.com/laserlemon/gh-cru/tags)
+[![CI](https://img.shields.io/github/actions/workflow/status/laserlemon/gh-cru/ci.yml?style=flat-square)](https://github.com/laserlemon/gh-cru/actions/workflows/ci.yml)
 
 ```sh
 gh extension install laserlemon/gh-cru
 
-# Score one PR or a list of refs (the "view" verb is implied).
-gh cru 1234
-gh cru owner/repo#1234
+# Score one PR, mirroring "gh pr view" (the "view" verb is implied).
+gh cru                            # the PR for the current branch
+gh cru 1234                       # by number
+gh cru my-feature-branch          # by branch name
 gh cru https://github.com/owner/repo/pull/1234
-gh cru acme/web#1234 acme/web#1235 acme/web#1236
+gh cru --repo owner/name 1234     # a PR in another repo
 
 # Score every PR that matches a "gh pr list" query.
 gh cru list --repo owner/name --state merged --limit 50
 gh cru list --author @me --state open
 gh cru list --search 'is:open updated:>2026-01-01'
-
-# Stdin: pre-fetched JSON (skips per-PR API calls when fields are included).
-gh pr list --repo owner/name --state merged --limit 50 --json \
-  url,number,additions,deletions,changedFiles,baseRefName,mergeCommit,labels,author,state,files,title \
-  | gh cru view -
 ```
 
 ## What CRU is
@@ -50,7 +50,7 @@ For the math, see [`laserlemon/cru`](https://github.com/laserlemon/cru).
 ## Example
 
 ```sh
-$ gh cru acme/web#1234
+$ gh cru --repo acme/web 1234
 
 acme/web#1234
 
@@ -99,23 +99,39 @@ direct + 80 team = 120 LOC, share 0.500.
 | `your CRU` | What does this PR actually cost me to review, given my team membership? |
 | `total CRU` | How much team review burden did this PR create? |
 
-## Batch and scripting
+## Two commands, mirroring `gh pr`
 
-PR references can be bare numbers (if `--repo` is set or you're in a git
-repo), shorthand (`owner/name#123`), or URLs. Pass several at once or
-pipe them in:
+`gh cru` mirrors the `gh pr` commands you already know.
+
+### `gh cru view`
+
+Scores one pull request, the same way `gh pr view` shows one. The verb is
+implied, so `gh cru` on its own is `gh cru view`. The PR argument takes the
+same forms `gh pr view` accepts:
 
 ```sh
-# Score many PRs at once; CODEOWNERS is fetched once per repo per invocation.
-gh cru 1234 1235 1236 1237
-
-# Cross-repo: each ref carries its own owner/name.
-gh cru acme/web#1234 acme/api#42
+gh cru                            # the PR for the current branch
+gh cru 1234                       # by number (--repo or git context)
+gh cru my-feature-branch          # by branch name
+gh cru https://github.com/owner/repo/pull/1234
+gh cru --repo owner/name 1234     # a PR in another repo
 ```
+
+Under the hood `gh cru view` shells out to `gh pr view` to resolve and fetch
+the PR, then scores it. A few `gh pr view` flags are intercepted because they
+don't fit a score:
+
+| Flag | What gh cru does |
+|---|---|
+| `--json` | Forced to the field set gh cru needs. Your `--json` controls gh cru's own output instead (same as `gh cru list`). |
+| `--jq`/`-q`, `--template`/`-t` | Dropped (they format the inner JSON gh cru consumes). |
+| `--web`/`-w`, `--comments`/`-c` | Rejected: gh cru produces a score, not a browser view or comment thread. |
+| `--repo`/`-R` | Honored and forwarded. |
 
 ### `gh cru list`
 
-Forward any `gh pr list` flag to score the whole result set:
+Forward any `gh pr list` flag to score the whole result set, in the order gh
+returned them:
 
 ```sh
 gh cru list --state merged --limit 50
@@ -124,44 +140,35 @@ gh cru list --repo owner/name --label bug
 gh cru list --search 'is:open updated:>2026-01-01'
 ```
 
-`gh cru list` runs `gh pr list` once with a fixed `--json` field set, then
-scores each PR locally without per-PR API calls. CODEOWNERS is fetched
-once per unique repo. For a single-repo `--state open` workload, that's
-**1 list call + 1 CODEOWNERS fetch** for all 50+ PRs. Any `--json` flag
-the user passes is silently overridden so the required field set is
-always emitted.
-
-### `gh cru view -` (stdin)
-
-For full control over which PRs get scored, pipe JSON to `gh cru view -`
-(or just `gh cru -`). Accepts a JSON array, NDJSON, or one JSON object.
+CODEOWNERS is fetched once per repo per invocation, so a batch is cheap. As
+with `view`, gh cru forces its own `--json` field set; pass `--json` on
+`gh cru` itself (before `list`) to get JSON output instead:
 
 ```sh
-# Use gh search to span orgs, then score.
-gh search prs --json url --limit 20 author:laserlemon \
-  | gh cru view -
-
-# Pre-fetched scoring fields: 0 PR-API calls per row.
-gh pr list --repo owner/name --json \
-  url,additions,deletions,changedFiles,baseRefName,mergeCommit,labels,author,state,files \
-  | gh cru view -
+gh cru --json list --state open
 ```
 
-Output mode auto-detects TTY:
+`gh cru list` runs `gh pr list` once, then scores each PR locally without
+per-PR API calls. For a single-repo `--state open` workload, that's
+**1 list call + 1 CODEOWNERS fetch** for all 50+ PRs.
+
+## Output
+
+Output mode auto-detects the terminal, matching `gh`'s own convention:
 
 - **TTY**: human-readable with colored markers and column alignment
 - **piped**: tab-separated rows, no color (gh script-mode convention)
-- **`--json`**: compact NDJSON; one PR per line. Each owner row carries
-  `name` (bare login or `org/team`, `null` for the synthetic unowned row),
-  `type` (`"user"` / `"team"` / `"unowned"`), and `is_you` (true when the
-  owner matches your `@login` directly or via team membership). Pipe
-  through `jq .` for pretty output
+- **`--json`**: compact JSON; one object per PR (NDJSON from `gh cru list`).
+  Each owner row carries `name` (bare login or `org/team`, `null` for the
+  synthetic unowned row), `type` (`"user"` / `"team"` / `"unowned"`), and
+  `is_you` (true when the owner matches your `@login` directly or via team
+  membership). Pipe through `jq .` for pretty output
 
 ## Flags
 
 | Flag | Purpose |
 |---|---|
-| `-R, --repo OWNER/NAME` | Default repo for bare PR numbers |
+| `-R, --repo OWNER/NAME` | Repo for the PR; forwarded to `gh pr` |
 | `--json` | Structured output |
 | `--skip-ownership` | Skip CODEOWNERS lookups; treat ownership as 1.0 |
 | `--skip-personal` | Skip fetching your team memberships; no "your CRU" |

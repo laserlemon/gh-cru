@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -252,6 +253,116 @@ func TestExtractRootFlags(t *testing.T) {
 			}
 			if !reflect.DeepEqual(mediumRiskLabelsFlag, tc.wantMediumLabels) {
 				t.Errorf("mediumRiskLabelsFlag = %v, want %v", mediumRiskLabelsFlag, tc.wantMediumLabels)
+			}
+		})
+	}
+}
+
+func TestStripViewFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      []string
+		want    []string
+		wantErr string // substring; "" means no error expected
+	}{
+		{
+			name: "bare positional passes through",
+			in:   []string{"1234"},
+			want: []string{"1234"},
+		},
+		{
+			name: "no args (current-branch case) stays empty",
+			in:   []string{},
+			want: []string{},
+		},
+		{
+			name: "branch name passes through",
+			in:   []string{"my-feature-branch"},
+			want: []string{"my-feature-branch"},
+		},
+		{
+			name: "--repo and value preserved",
+			in:   []string{"--repo", "o/r", "1234"},
+			want: []string{"--repo", "o/r", "1234"},
+		},
+		{
+			name: "-R and value preserved",
+			in:   []string{"-R", "o/r", "1234"},
+			want: []string{"-R", "o/r", "1234"},
+		},
+		{
+			name: "drop --json with value",
+			in:   []string{"--json", "number,url", "1234"},
+			want: []string{"1234"},
+		},
+		{
+			name: "drop --json=value",
+			in:   []string{"--json=number,url", "1234"},
+			want: []string{"1234"},
+		},
+		{
+			name: "drop --jq separate",
+			in:   []string{"--jq", ".number", "1234"},
+			want: []string{"1234"},
+		},
+		{
+			name: "drop -q=value",
+			in:   []string{"-q=.number", "1234"},
+			want: []string{"1234"},
+		},
+		{
+			name: "drop --template separate",
+			in:   []string{"--template", "{{.number}}", "1234"},
+			want: []string{"1234"},
+		},
+		{
+			name: "drop -t=value",
+			in:   []string{"-t={{.number}}", "1234"},
+			want: []string{"1234"},
+		},
+		{
+			name:    "--web rejected",
+			in:      []string{"--web", "1234"},
+			wantErr: "--web is not supported",
+		},
+		{
+			name:    "-w rejected",
+			in:      []string{"-w"},
+			wantErr: "--web is not supported",
+		},
+		{
+			name:    "--comments rejected",
+			in:      []string{"--comments", "1234"},
+			wantErr: "--comments is not supported",
+		},
+		{
+			name:    "-c rejected",
+			in:      []string{"-c", "1234"},
+			wantErr: "--comments is not supported",
+		},
+		{
+			name: "everything together: strip json, preserve repo + ref",
+			in:   []string{"--json", "number", "--repo", "o/r", "my-branch"},
+			want: []string{"--repo", "o/r", "my-branch"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := stripViewFlags(tc.in)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("\n  in: %v\n got: %v\nwant: %v", tc.in, got, tc.want)
 			}
 		})
 	}
