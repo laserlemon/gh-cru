@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/cli/go-gh/v2 v2.13.0
 	github.com/hmarr/codeowners v1.2.1
-	github.com/laserlemon/cru v0.2.1
+	github.com/laserlemon/cru v0.3.1
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d
 	github.com/spf13/cobra v1.10.2
 )
