@@ -12,119 +12,126 @@ import (
 // JSON writes one compact JSON object per call (NDJSON when looped over
 // multiple PRs).
 //
+// The schema carries exactly what the human renderer draws, nothing more:
+// the heading (repo/number/title), the Size/Risk/Base formula block, and
+// an `ownership` object holding the owner table. PR metadata the score
+// doesn't use (author, state, additions/deletions, file count) is
+// deliberately omitted; consumers who want it have `gh pr view --json`.
+//
 // Float values are rounded to 6 decimal places before serialization.
-// Rationale: the underlying math (Size, ownership shares, CRU)
-// involves Φ-CDF approximations and floating-point division whose tails
-// of `.999999999` and `.000000001` artifacts are noise, not signal.
-// Six places preserves all meaningful precision (PR sizes never need
-// more than ~4 significant digits of factor) and produces output that
+// Rationale: the underlying math (Size, ownership shares, CRU) involves
+// Φ-CDF approximations and floating-point division whose tails of
+// `.999999999` and `.000000001` artifacts are noise, not signal. Six
+// places preserves all meaningful precision (PR sizes never need more
+// than ~4 significant digits of factor) and produces output that
 // jq/duckdb/Python downstream can `==`-compare without surprises.
 func JSON(w io.Writer, repo string, s score.PRScore) error {
-	type ownerJSON struct {
-		Name           *string `json:"name"` // null when type=="unowned"
-		Type           string  `json:"type"` // "user" | "team" | "unowned"
-		OwnedLOC       int     `json:"owned_loc"`
-		OwnershipShare float64 `json:"ownership_share"`
-		RequestedCRU   float64 `json:"requested_cru"`
-		IsYou          bool    `json:"is_you"` // direct @login or team-membership match
+	// rowJSON is the shared shape for every ownership row: the named owner
+	// rows in `owners[]` and the three summary rows (unowned/all/you) are
+	// all {lines, share, cru}, mirroring the LINES/SHARE/CRU table columns.
+	type rowJSON struct {
+		Lines int     `json:"lines"`
+		Share float64 `json:"share"`
+		CRU   float64 `json:"cru"`
 	}
-	type youJSON struct {
-		Login          string  `json:"login"`
-		OwnedLOC       int     `json:"owned_loc"`
-		OwnershipShare float64 `json:"ownership_share"`
-		RequestedCRU   float64 `json:"requested_cru"`
+	// ownerJSON is a named owner row: a rowJSON plus the identity columns
+	// that drive the table marker (name + type + is_you → =/*/•).
+	type ownerJSON struct {
+		Name  string  `json:"name"` // bare login or "org/team"; "@" stripped
+		Type  string  `json:"type"` // "user" | "team"
+		Lines int     `json:"lines"`
+		Share float64 `json:"share"`
+		CRU   float64 `json:"cru"`
+		IsYou bool    `json:"is_you"` // direct @login or team-membership match
+	}
+	type ownershipJSON struct {
+		Owners  []ownerJSON `json:"owners"`
+		Unowned rowJSON     `json:"unowned"`       // always present, zeroed if no unowned lines
+		All     rowJSON     `json:"all"`           // always present; Σ over all rows
+		You     *rowJSON    `json:"you,omitempty"` // present iff identity is known
 	}
 	type out struct {
-		Repo           string      `json:"repo"`
-		Number         int         `json:"number"`
-		Title          string      `json:"title"`
-		Author         string      `json:"author"`
-		State          string      `json:"state"`
-		Additions      int         `json:"additions"`
-		Deletions      int         `json:"deletions"`
-		LOC            int         `json:"loc"`
-		Files          int         `json:"files"`
-		SizeLabel      string      `json:"size_label"`
-		SizeFactor     float64     `json:"size_factor"`
-		RiskLabel      string      `json:"risk_label"`
-		RiskMultiplier float64     `json:"risk_multiplier"`
-		NormalCRU      float64     `json:"normal_cru"` // size × risk
-		TotalCRU       float64     `json:"total_cru"`  // Σ per-owner; review burden
-		You            *youJSON    `json:"you,omitempty"`
-		MyIdentities   []string    `json:"my_identities,omitempty"`
-		Owners         []ownerJSON `json:"owners"`
-		UnownedLOC     int         `json:"unowned_loc"`
+		Repo           string        `json:"repo"`
+		Number         int           `json:"number"`
+		Title          string        `json:"title"`
+		Lines          int           `json:"lines"`
+		SizeLabel      string        `json:"size_label"`
+		SizeFactor     float64       `json:"size_factor"`
+		RiskLabel      string        `json:"risk_label"`
+		RiskMultiplier float64       `json:"risk_multiplier"`
+		BaseCRU        float64       `json:"base_cru"`
+		Ownership      ownershipJSON `json:"ownership"`
 	}
-	owners := make([]ownerJSON, 0)
+
 	mySet := makeIdentitySet(s.MyIdentities)
 	myLoginKey := ""
 	if s.MyLogin != "" {
 		myLoginKey = "@" + strings.ToLower(s.MyLogin)
 	}
-	for _, o := range s.SortedOwners() {
-		isUnowned := o.Owner == score.UnownedOwnerLabel
-		ownerKey := strings.ToLower(o.Owner)
-		isYou := !isUnowned && ((myLoginKey != "" && ownerKey == myLoginKey) ||
-			mySet[ownerKey])
 
-		// type: "unowned" for the synthetic row, "team" for slug-style
-		// "@org/team" identifiers, "user" otherwise. CODEOWNERS doesn't
-		// distinguish at the syntactic level, so we use the "/" convention
-		// the same way GitHub's UI does.
-		var ownerType string
-		var name *string
-		switch {
-		case isUnowned:
-			ownerType = "unowned"
-			name = nil
-		default:
-			display := displayOwner(o.Owner)
-			name = &display
-			if strings.Contains(o.Owner, "/") {
-				ownerType = "team"
-			} else {
-				ownerType = "user"
-			}
+	// Named owners only; the synthetic unowned owner is surfaced as the
+	// `ownership.unowned` summary row, not as an entry in `owners[]`.
+	owners := make([]ownerJSON, 0)
+	var unowned rowJSON
+	var allLOC int
+	var allShare, allCRU float64
+	for _, o := range s.SortedOwners() {
+		allLOC += o.OwnedLOC
+		allShare += o.Share
+		allCRU += o.Score
+
+		if o.Owner == score.UnownedOwnerLabel {
+			unowned = rowJSON{Lines: o.OwnedLOC, Share: round6(o.Share), CRU: round6(o.Score)}
+			continue
 		}
 
+		ownerKey := strings.ToLower(o.Owner)
+		isYou := (myLoginKey != "" && ownerKey == myLoginKey) || mySet[ownerKey]
+		// type: "team" for slug-style "@org/team" identifiers, "user"
+		// otherwise. CODEOWNERS doesn't distinguish at the syntactic level,
+		// so we use the "/" convention the same way GitHub's UI does.
+		ownerType := "user"
+		if strings.Contains(o.Owner, "/") {
+			ownerType = "team"
+		}
 		owners = append(owners, ownerJSON{
-			Name:           name,
-			Type:           ownerType,
-			OwnedLOC:       o.OwnedLOC,
-			OwnershipShare: round6(o.Share),
-			RequestedCRU:   round6(o.Score),
-			IsYou:          isYou,
+			Name:  displayOwner(o.Owner),
+			Type:  ownerType,
+			Lines: o.OwnedLOC,
+			Share: round6(o.Share),
+			CRU:   round6(o.Score),
+			IsYou: isYou,
 		})
 	}
-	var you *youJSON
-	if s.MyLogin != "" && s.MyOwnedLOC > 0 {
-		you = &youJSON{
-			Login:          s.MyLogin,
-			OwnedLOC:       s.MyOwnedLOC,
-			OwnershipShare: round6(s.MyShare),
-			RequestedCRU:   round6(s.MyCRU),
+
+	// you: present whenever we know who you are, even at zero stake, so the
+	// human output (which shows the > row on any known identity) and the
+	// JSON agree. Absent entirely when unauthenticated / identity unknown.
+	var you *rowJSON
+	if s.MyLogin != "" {
+		you = &rowJSON{
+			Lines: s.MyOwnedLOC,
+			Share: round6(s.MyShare),
+			CRU:   round6(s.MyCRU),
 		}
 	}
+
 	o := out{
 		Repo:           repo,
 		Number:         s.PR.Number,
 		Title:          s.PR.Title,
-		Author:         s.PR.Author,
-		State:          s.PR.State,
-		Additions:      s.PR.Additions,
-		Deletions:      s.PR.Deletions,
-		LOC:            s.LOC,
-		Files:          s.PR.Files,
+		Lines:          s.LOC,
 		SizeLabel:      s.Size.String(),
 		SizeFactor:     round6(float64(s.Size)),
 		RiskLabel:      s.Risk.String(),
 		RiskMultiplier: round6(s.Risk.Multiplier()),
-		NormalCRU:      round6(s.CRU()),
-		TotalCRU:       round6(s.AuthorCRU()),
-		You:            you,
-		MyIdentities:   s.MyIdentities,
-		Owners:         owners,
-		UnownedLOC:     s.UnownedChanges,
+		BaseCRU:        round6(s.CRU()),
+		Ownership: ownershipJSON{
+			Owners:  owners,
+			Unowned: unowned,
+			All:     rowJSON{Lines: allLOC, Share: round6(allShare), CRU: round6(allCRU)},
+			You:     you,
+		},
 	}
 	enc := json.NewEncoder(w)
 	// Compact NDJSON: one PR per line, no internal newlines. This makes

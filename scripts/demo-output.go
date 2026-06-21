@@ -69,7 +69,7 @@ func main() {
 			Risk:   cru.RiskLow,
 		},
 		{
-			Name:          "owners + partial unowned LOC (mixed coverage)",
+			Name:          "owners + partial unowned lines (mixed coverage)",
 			Title:         "Refactor session store and add Redis backend",
 			Repo:          "acme/web",
 			Number:        1236,

@@ -36,9 +36,9 @@ CRU = size factor × ownership share × risk multiplier
   The unit is calibrated so that one "typical" PR (the distribution's
   median) scores exactly `1.0`. Bounded between ~0.18 (typos) and ~5.66
   (monster PRs).
-- **ownership share** is `owned_LOC / total_LOC` based on CODEOWNERS.
+- **ownership share** is `owned lines / total lines` based on CODEOWNERS.
   A 1,000-line PR where 50 lines touch your team's code costs you 5% of the
-  size factor. LOC the CODEOWNERS rules don't cover is attributed to a
+  size factor. Lines the CODEOWNERS rules don't cover are attributed to a
   synthetic `unowned` owner so unowned work is never silently dropped.
 - **risk multiplier** is `1.0` by default. PRs labeled `risk:medium` get `2.0` and
   PRs labeled `risk:high` get `4.0` (same span as the difference between an S
@@ -54,17 +54,17 @@ $ gh cru --repo acme/web 1234
 
 Add rate limiting to the webhook dispatcher acme/web#1234
 
-Size  XL   3.065  240 LOC
+Size  XL   3.065  240 lines
 Risk  low  1.000
 Base       3.065  CRU
 
-   CODE OWNER               LOC   SHARE    CRU
-=  laserlemon                40   16.7%  0.511
-*  acme/big-orca             80   33.3%  1.022
-•  acme/payments-reviewers  100   41.7%  1.277
-~  Unowned                   40   16.7%  0.511
-+  All ownership            260  108.3%  3.321
->  Your ownership           120   50.0%  1.533
+   CODE OWNER               LINES   SHARE    CRU
+=  laserlemon                  40   16.7%  0.511
+*  acme/big-orca               80   33.3%  1.022
+•  acme/payments-reviewers    100   41.7%  1.277
+~  Unowned                     40   16.7%  0.511
++  All ownership              260  108.3%  3.321
+>  Your ownership             120   50.0%  1.533
 ```
 
 The heading mirrors `gh pr view`: the PR title in bold, then a gray
@@ -74,7 +74,7 @@ The **formula block** is the score itself, one factor per row:
 
 | Row | Question it answers |
 |---|---|
-| `Size` | How big is this PR? (the bucket, its factor, and the raw LOC) |
+| `Size` | How big is this PR? (the bucket, its factor, and the raw line count) |
 | `Risk` | How risky? (the tier and its multiplier) |
 | `Base` | The PR's intrinsic review weight: `Size × Risk`, in CRU |
 
@@ -90,20 +90,20 @@ hook to review it. A 1-character marker classifies each row:
 | `+` | `All ownership`: every row summed, the team's total review burden |
 | `>` | `Your ownership`: what this PR costs you to review |
 
-`SHARE` is each owner's slice of the PR (their LOC over the PR's total);
+`SHARE` is each owner's slice of the PR (their lines over the PR's total);
 `CRU` is that slice's review weight (`Base × share`).
 
 The three gray summary rows (`~`, `+`, `>`) frame the raw owner data as
 computed totals. `All ownership` sums every row including `Unowned`; here
 it exceeds 100% because the `big-orca` and `payments-reviewers` teams share
-some of the same files, so per-owner LOC sums to more than the PR's total.
-With no overlap, `All ownership` lands at exactly the PR's LOC and its CRU
+some of the same files, so per-owner lines sum to more than the PR's total.
+With no overlap, `All ownership` lands at exactly the PR's line count and its CRU
 equals `Base`.
 
 `Your ownership` is what THIS PR costs you to review: every file owned by
 your `@login` OR any team you belong to, counted once even when both match.
 For the reviewer above (`laserlemon`, on `acme/big-orca`), that's 40 direct
-+ 80 team = 120 LOC, share 50.0%. It only renders when you own something.
++ 80 team = 120 lines, share 50.0%. It only renders when you own something.
 
 ## Two commands, mirroring `gh pr`
 

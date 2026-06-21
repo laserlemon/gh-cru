@@ -29,7 +29,7 @@ var (
 	colorBold = ansi.ColorFunc("default+b")
 
 	// Muted gray for incidental text: the formula-block labels, the
-	// "N LOC" annotation, the "CRU" unit, and the gray owner/repo#N
+	// "N lines" annotation, the "CRU" unit, and the gray owner/repo#N
 	// reference in the heading. brightblack (ANSI 90) reads as a stable
 	// gray on both light and dark terminals, unlike the dim attribute,
 	// which many terminals render inconsistently or not at all.
@@ -105,7 +105,7 @@ func displayOwner(s string) string {
 	return strings.TrimPrefix(s, "@")
 }
 
-// muted wraps incidental gray text (the "N LOC" annotation, the "CRU"
+// muted wraps incidental gray text (the "N lines" annotation, the "CRU"
 // unit, the heading's owner/repo#N reference). Returns bare text when
 // color is disabled.
 func muted(s string, enabled bool) string {

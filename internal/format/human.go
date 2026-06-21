@@ -18,11 +18,11 @@ import (
 //
 //	<title>  owner/repo#N            (bold title + gray ref, mirrors gh pr view)
 //
-//	Size  <bucket>  <factor>  <n> LOC
+//	Size  <bucket>  <factor>  <n> lines
 //	Risk  <tier>    <mult>
 //	Base            <base>    CRU    (Base = Size × Risk, the review weight)
 //
-//	   CODE OWNER       LOC   SHARE    CRU
+//	   CODE OWNER       LINES   SHARE    CRU
 //	*  acme/some-team    34   29.3%  0.585   (named owners: plain rows)
 //	•  acme/other-team   80   68.9%  1.378
 //	~  Unowned            2    1.7%  0.034   (summary rows: gray+bold)
@@ -63,7 +63,7 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	// through the same tableprinter as the owner table (see
 	// writeFormulaBlock) so its columns content-size and space themselves
 	// identically: a 2-space gap between columns, numeric values right-
-	// aligned (so the factors line up on the decimal), and the "N LOC" /
+	// aligned (so the factors line up on the decimal), and the "N lines" /
 	// "CRU" annotation in its own trailing column. Base is Size × Risk, the
 	// owner-agnostic review weight; "CRU" rides as a trailing gray unit so
 	// every number below it is silently understood to be in CRU.
@@ -79,7 +79,7 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 // tableprinter's standard 2-space delimiter, and the numeric value column
 // is right-aligned so the factors line up on the decimal point. The grade
 // (Size bucket / Risk tier) carries its semantic color; the value carries
-// none (default fg, theme-safe); the trailing "N LOC" / "CRU" annotation
+// none (default fg, theme-safe); the trailing "N lines" / "CRU" annotation
 // is gray. Risk has no annotation and Base has no grade, so those cells are
 // empty but still occupy their column, keeping every value and the "CRU"
 // unit aligned under the rows above. Like the owner table, this degrades to
@@ -97,14 +97,14 @@ func writeFormulaBlock(w io.Writer, s score.PRScore, isTTY, color bool, width in
 	sizeBucket := s.Size.String()
 
 	// Size: grade = bucket (size color), value = size factor, annotation
-	// = "N LOC". The first row defines the column count (4), so it carries
+	// = "N lines". The first row defines the column count (4), so it carries
 	// every column even though Risk omits the annotation.
 	tp.AddField("Size", tableprinter.WithColor(labelColor))
 	tp.AddField(sizeBucket, tableprinter.WithColor(func(v string) string {
 		return sizeColor(v, sizeBucket, color)
 	}))
 	tp.AddField(fmt.Sprintf("%.3f", float64(s.Size)), tableprinter.WithPadding(padLeft))
-	tp.AddField(fmt.Sprintf("%d LOC", s.LOC), tableprinter.WithColor(mutedColor))
+	tp.AddField(fmt.Sprintf("%d lines", s.LOC), tableprinter.WithColor(mutedColor))
 	tp.EndRow()
 
 	// Risk: grade = tier (risk color), value = risk multiplier, no annotation.
@@ -137,7 +137,7 @@ func writeFormulaBlock(w io.Writer, s score.PRScore, isTTY, color bool, width in
 //
 // Layout uses a dedicated 1-char gutter column for the row-type marker:
 //
-//	   CODE OWNER             LOC   SHARE    CRU
+//	   CODE OWNER             LINES   SHARE    CRU
 //	=  laserlemon              20   40.0%  0.800   (direct match)
 //	*  acme/big-orca           80   40.0%  0.800   (team you're on)
 //	•  acme/web-team          120   60.0%  1.200   (someone else)
@@ -165,7 +165,7 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 	}
 	tp.AddField(" ", tableprinter.WithColor(headerColor))
 	tp.AddField("CODE OWNER", tableprinter.WithColor(headerColor))
-	tp.AddField("LOC", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
+	tp.AddField("LINES", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
 	tp.AddField("SHARE", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
 	tp.AddField("CRU", tableprinter.WithColor(headerColor), tableprinter.WithPadding(padLeft))
 	tp.EndRow()
@@ -186,7 +186,7 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 	}
 
 	// Summary rows, gray+bold to frame them as computed totals:
-	//   ~ Unowned        LOC matched by no CODEOWNERS rule (only if any)
+	//   ~ Unowned        lines matched by no CODEOWNERS rule (only if any)
 	//   + All ownership  sum across every owner incl. unowned = AuthorCRU
 	//   > Your ownership your slice (only when you own something)
 	if u, ok := s.OwnershipMap[score.UnownedOwnerLabel]; ok && u.OwnedLOC > 0 {
@@ -201,7 +201,12 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 	}
 	addSummaryRow(tp, "+", "All ownership", allLOC, allShare, s.AuthorCRU(), color)
 
-	if s.MyLogin != "" && s.MyOwnedLOC > 0 {
+	// Your ownership: shown whenever we know who you are, even if your
+	// share is zero. Keying on identity (not MyOwnedLOC > 0) keeps the
+	// human output and the JSON `you` block consistent: both surface the
+	// moment authentication resolves an identity, so "you own nothing here"
+	// reads as an explicit 0.000 row rather than a silent omission.
+	if s.MyLogin != "" {
 		addSummaryRow(tp, ">", "Your ownership", s.MyOwnedLOC, s.MyShare, s.MyCRU, color)
 	}
 
@@ -210,10 +215,10 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 	}
 
 	// Footnote: render only when team enumeration was incomplete AND the
-	// user didn't surface in the table (no direct @login match). The
-	// Codespaces default GITHUB_TOKEN is the common case: a PR owned by a
-	// team the user is in shows up with no `*` marker and "Your ownership"
-	// reads 0, so it's silently dropped.
+	// user didn't surface as a direct @login owner. The Codespaces default
+	// GITHUB_TOKEN is the common case: a PR owned by a team the user is in
+	// shows up with no `*` marker and "Your ownership" reads 0, which would
+	// understate their real stake, so we explain why.
 	if !s.TeamsResolved && s.MyLogin != "" && s.MyOwnedLOC == 0 {
 		fmt.Fprintln(w)
 		note := "Calculating your personal CRU requires read:org authorization to read your team memberships."

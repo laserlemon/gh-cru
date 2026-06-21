@@ -86,10 +86,86 @@ func stripANSI(s string) string {
 
 // --- JSON shape -----------------------------------------------------------
 
-// TestJSONShapeIncludesUnowned verifies that the JSON output includes
-// the synthetic unowned owner row with name=null and type="unowned",
-// since the JSON shape is a public contract for downstream scripts.
-func TestJSONShapeIncludesUnowned(t *testing.T) {
+// jsonRow mirrors the shared {loc, share, cru} shape used by every
+// ownership row (named owners and the unowned/all/you summaries).
+type jsonRow struct {
+	Lines int     `json:"lines"`
+	Share float64 `json:"share"`
+	CRU   float64 `json:"cru"`
+}
+
+type jsonOwner struct {
+	Name  string  `json:"name"`
+	Type  string  `json:"type"`
+	Lines int     `json:"lines"`
+	Share float64 `json:"share"`
+	CRU   float64 `json:"cru"`
+	IsYou bool    `json:"is_you"`
+}
+
+type jsonOut struct {
+	Repo           string  `json:"repo"`
+	Number         int     `json:"number"`
+	Title          string  `json:"title"`
+	Lines          int     `json:"lines"`
+	SizeLabel      string  `json:"size_label"`
+	SizeFactor     float64 `json:"size_factor"`
+	RiskLabel      string  `json:"risk_label"`
+	RiskMultiplier float64 `json:"risk_multiplier"`
+	BaseCRU        float64 `json:"base_cru"`
+	Ownership      struct {
+		Owners  []jsonOwner `json:"owners"`
+		Unowned jsonRow     `json:"unowned"`
+		All     jsonRow     `json:"all"`
+		You     *jsonRow    `json:"you"`
+	} `json:"ownership"`
+}
+
+func decodeJSON(t *testing.T, buf *bytes.Buffer) jsonOut {
+	t.Helper()
+	var got jsonOut
+	if err := json.NewDecoder(buf).Decode(&got); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	return got
+}
+
+// TestJSONShapeOnlyRendersUsedFields verifies the schema carries exactly
+// the fields the human output draws and omits the PR metadata it doesn't
+// use (author, state, additions, deletions, files, my_identities).
+func TestJSONShapeOnlyRendersUsedFields(t *testing.T) {
+	owners := []score.Ownership{
+		{Owner: "@acme/eng", OwnedLOC: 100, Share: 1.0, Score: 2.0},
+	}
+	s := mkScore(100, true, owners, 0, "laserlemon", []string{"@laserlemon"})
+
+	var buf bytes.Buffer
+	if err := JSON(&buf, "acme/web", s); err != nil {
+		t.Fatalf("JSON render: %v", err)
+	}
+	body := buf.String()
+	for _, gone := range []string{
+		`"author"`, `"state"`, `"additions"`, `"deletions"`, `"files"`,
+		`"my_identities"`, `"normal_cru"`, `"total_cru"`, `"requested_cru"`,
+		`"ownership_share"`, `"owned_loc"`, `"unowned_loc"`,
+	} {
+		if strings.Contains(body, gone) {
+			t.Errorf("JSON should not contain %s; got:\n%s", gone, body)
+		}
+	}
+	for _, want := range []string{
+		`"base_cru"`, `"ownership"`, `"share"`, `"cru"`, `"lines"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("JSON missing expected key %s; got:\n%s", want, body)
+		}
+	}
+}
+
+// TestJSONShapeUnownedIsSummaryRow verifies the synthetic unowned owner is
+// surfaced as ownership.unowned (a {loc,share,cru} summary), NOT as an
+// entry in ownership.owners[].
+func TestJSONShapeUnownedIsSummaryRow(t *testing.T) {
 	owners := []score.Ownership{
 		{Owner: "@acme/eng", OwnedLOC: 60, Share: 0.6, Score: 1.2},
 		{Owner: score.UnownedOwnerLabel, OwnedLOC: 40, Share: 0.4, Score: 0.8},
@@ -100,50 +176,27 @@ func TestJSONShapeIncludesUnowned(t *testing.T) {
 	if err := JSON(&buf, "acme/web", s); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
+	got := decodeJSON(t, &buf)
 
-	var got struct {
-		Owners []struct {
-			Name           *string `json:"name"`
-			Type           string  `json:"type"`
-			OwnedLOC       int     `json:"owned_loc"`
-			OwnershipShare float64 `json:"ownership_share"`
-			RequestedCRU   float64 `json:"requested_cru"`
-			IsYou          bool    `json:"is_you"`
-		} `json:"owners"`
-		UnownedLOC int `json:"unowned_loc"`
+	// owners[] holds only the named owner, not the unowned row.
+	if len(got.Ownership.Owners) != 1 {
+		t.Fatalf("ownership.owners size = %d, want 1 (unowned excluded)", len(got.Ownership.Owners))
 	}
-	if err := json.NewDecoder(&buf).Decode(&got); err != nil {
-		t.Fatalf("decode JSON: %v", err)
+	if got.Ownership.Owners[0].Name != "acme/eng" {
+		t.Errorf("owners[0].name = %q, want acme/eng", got.Ownership.Owners[0].Name)
 	}
-
-	if len(got.Owners) != 2 {
-		t.Fatalf("Owners size = %d, want 2", len(got.Owners))
+	// unowned surfaces as its own summary row.
+	if got.Ownership.Unowned.Lines != 40 {
+		t.Errorf("ownership.unowned.lines = %d, want 40", got.Ownership.Unowned.Lines)
 	}
-	if got.UnownedLOC != 40 {
-		t.Errorf("UnownedLOC = %d, want 40", got.UnownedLOC)
-	}
-	// The unowned row should have Type=="unowned", Name==nil, IsYou=false.
-	var found bool
-	for _, o := range got.Owners {
-		if o.Type == "unowned" {
-			found = true
-			if o.Name != nil {
-				t.Errorf("unowned row has Name=%q; want null", *o.Name)
-			}
-			if o.IsYou {
-				t.Errorf("unowned row has IsYou=true; want false")
-			}
-		}
-	}
-	if !found {
-		t.Errorf("no unowned row found in JSON output")
+	if got.Ownership.Unowned.CRU != 0.8 {
+		t.Errorf("ownership.unowned.cru = %v, want 0.8", got.Ownership.Unowned.CRU)
 	}
 }
 
-// TestJSONShapeUsesOwnershipShare verifies the field is named
-// ownership_share (not ownership_factor; that was the old name and
-// downstream consumers might still query it).
-func TestJSONShapeUsesOwnershipShare(t *testing.T) {
+// TestJSONShapeUnownedZeroedWhenAbsent verifies ownership.unowned is always
+// present, zeroed when the PR has no unowned LOC.
+func TestJSONShapeUnownedZeroedWhenAbsent(t *testing.T) {
 	owners := []score.Ownership{
 		{Owner: "@acme/eng", OwnedLOC: 100, Share: 1.0, Score: 2.0},
 	}
@@ -153,13 +206,33 @@ func TestJSONShapeUsesOwnershipShare(t *testing.T) {
 	if err := JSON(&buf, "acme/web", s); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
-
 	body := buf.String()
-	if !strings.Contains(body, `"ownership_share"`) {
-		t.Errorf("JSON missing ownership_share field; got:\n%s", body)
+	if !strings.Contains(body, `"unowned":{"lines":0,"share":0,"cru":0}`) {
+		t.Errorf("ownership.unowned should be present and zeroed; got:\n%s", body)
 	}
-	if strings.Contains(body, `"ownership_factor"`) {
-		t.Errorf("JSON still has stale ownership_factor field; got:\n%s", body)
+}
+
+// TestJSONShapeAllSumsEveryRow verifies ownership.all is the sum across
+// every row including unowned (the team's total review burden), and can
+// exceed the PR's LOC / 100%% under CODEOWNERS overlap.
+func TestJSONShapeAllSumsEveryRow(t *testing.T) {
+	// Two teams overlap (each owns the same 80 LOC) → all.loc = 160 > 80.
+	owners := []score.Ownership{
+		{Owner: "@acme/auth", OwnedLOC: 80, Share: 1.0, Score: 2.0},
+		{Owner: "@acme/web", OwnedLOC: 80, Share: 1.0, Score: 2.0},
+	}
+	s := mkScore(80, true, owners, 0, "", nil)
+
+	var buf bytes.Buffer
+	if err := JSON(&buf, "acme/web", s); err != nil {
+		t.Fatalf("JSON render: %v", err)
+	}
+	got := decodeJSON(t, &buf)
+	if got.Ownership.All.Lines != 160 {
+		t.Errorf("ownership.all.lines = %d, want 160 (overlap sum)", got.Ownership.All.Lines)
+	}
+	if got.Ownership.All.CRU != 4.0 {
+		t.Errorf("ownership.all.cru = %v, want 4.0", got.Ownership.All.CRU)
 	}
 }
 
@@ -192,36 +265,26 @@ func TestJSONShapeRoundsFloats(t *testing.T) {
 		t.Errorf("JSON contains floats with > 6 decimal places: %v\nbody:\n%s", m, body)
 	}
 
-	// Spot-check a known field round-trips to its rounded value.
-	var got struct {
-		SizeFactor float64 `json:"size_factor"`
-		You        *struct {
-			OwnershipShare float64 `json:"ownership_share"`
-			RequestedCRU   float64 `json:"requested_cru"`
-		} `json:"you"`
-	}
-	if err := json.NewDecoder(strings.NewReader(body)).Decode(&got); err != nil {
-		t.Fatalf("decode JSON: %v", err)
-	}
+	// Spot-check known fields round-trip to their rounded values.
+	got := decodeJSON(t, &buf)
 	if got.SizeFactor != 0.123457 {
 		t.Errorf("size_factor = %v, want 0.123457", got.SizeFactor)
 	}
-	if got.You == nil {
-		t.Fatalf("missing you block")
+	if got.Ownership.You == nil {
+		t.Fatalf("missing ownership.you block")
 	}
-	if got.You.OwnershipShare != 0.333333 {
-		t.Errorf("you.ownership_share = %v, want 0.333333", got.You.OwnershipShare)
+	if got.Ownership.You.Share != 0.333333 {
+		t.Errorf("ownership.you.share = %v, want 0.333333", got.Ownership.You.Share)
 	}
-	if got.You.RequestedCRU != 0.777778 {
-		t.Errorf("you.requested_cru = %v, want 0.777778", got.You.RequestedCRU)
+	if got.Ownership.You.CRU != 0.777778 {
+		t.Errorf("ownership.you.cru = %v, want 0.777778", got.Ownership.You.CRU)
 	}
 }
 
-// TestJSONShapeOwnerTypes verifies the per-owner `type` field
-// distinguishes user / team / unowned, that the user's direct @login row
-// AND any team-membership row both set is_you=true, that team names use
-// the slug form (e.g. acme/justice-league), user names use bare login
-// (e.g. laserlemon, no leading "@"), and the unowned row has name==nil.
+// TestJSONShapeOwnerTypes verifies the per-owner `type` field distinguishes
+// user / team, that the user's direct @login row AND any team-membership
+// row both set is_you=true, that team names use the slug form (e.g.
+// acme/justice-league) and user names use the bare login (no leading "@").
 func TestJSONShapeOwnerTypes(t *testing.T) {
 	owners := []score.Ownership{
 		{Owner: "@laserlemon", OwnedLOC: 30, Share: 0.3, Score: 0.6},
@@ -236,73 +299,45 @@ func TestJSONShapeOwnerTypes(t *testing.T) {
 	if err := JSON(&buf, "acme/web", s); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
+	got := decodeJSON(t, &buf)
 
-	var got struct {
-		Owners []struct {
-			Name  *string `json:"name"`
-			Type  string  `json:"type"`
-			IsYou bool    `json:"is_you"`
-		} `json:"owners"`
-	}
-	if err := json.NewDecoder(&buf).Decode(&got); err != nil {
-		t.Fatalf("decode JSON: %v", err)
-	}
-
-	type row struct {
-		name  string // empty for unowned
-		typ   string
-		isYou bool
-	}
-	byName := map[string]row{}
-	var unowned *row
-	for _, o := range got.Owners {
-		r := row{typ: o.Type, isYou: o.IsYou}
-		if o.Name == nil {
-			if o.Type != "unowned" {
-				t.Errorf("name==nil but type=%q; want \"unowned\"", o.Type)
-			}
-			u := r
-			unowned = &u
-			continue
+	byName := map[string]jsonOwner{}
+	for _, o := range got.Ownership.Owners {
+		if o.Type == "unowned" {
+			t.Errorf("owner %q has retired type \"unowned\"", o.Name)
 		}
-		r.name = *o.Name
-		byName[*o.Name] = r
+		byName[o.Name] = o
 	}
 
 	direct, ok := byName["laserlemon"]
 	if !ok {
 		t.Fatalf("missing @laserlemon row (looked up bare \"laserlemon\")")
 	}
-	if direct.typ != "user" || !direct.isYou {
-		t.Errorf("laserlemon: type=%q is_you=%v; want user/true", direct.typ, direct.isYou)
+	if direct.Type != "user" || !direct.IsYou {
+		t.Errorf("laserlemon: type=%q is_you=%v; want user/true", direct.Type, direct.IsYou)
 	}
 
 	team, ok := byName["acme/justice-league"]
 	if !ok {
 		t.Fatalf("missing @acme/justice-league row (looked up bare \"acme/justice-league\")")
 	}
-	if team.typ != "team" || !team.isYou {
-		t.Errorf("acme/justice-league: type=%q is_you=%v; want team/true", team.typ, team.isYou)
+	if team.Type != "team" || !team.IsYou {
+		t.Errorf("acme/justice-league: type=%q is_you=%v; want team/true", team.Type, team.IsYou)
 	}
 
 	other, ok := byName["acme/other-team"]
 	if !ok {
 		t.Fatalf("missing @acme/other-team row")
 	}
-	if other.typ != "team" || other.isYou {
-		t.Errorf("acme/other-team: type=%q is_you=%v; want team/false", other.typ, other.isYou)
-	}
-
-	// No unowned row in this fixture (mkScore did not include one).
-	if unowned != nil {
-		t.Errorf("unexpected unowned row in JSON; fixture has no unowned LOC")
+	if other.Type != "team" || other.IsYou {
+		t.Errorf("acme/other-team: type=%q is_you=%v; want team/false", other.Type, other.IsYou)
 	}
 }
 
-// TestJSONShapeYouBlock verifies the optional `you` block surfaces with
-// the correct ownership_share field name and only renders when the user
-// has any owned LOC.
-func TestJSONShapeYouBlock(t *testing.T) {
+// TestJSONShapeYouShownWhenKnown verifies ownership.you surfaces as a pure
+// {loc,share,cru} row (no login field) whenever the identity is known,
+// even at zero stake.
+func TestJSONShapeYouShownWhenKnown(t *testing.T) {
 	owners := []score.Ownership{
 		{Owner: "@laserlemon", OwnedLOC: 40, Share: 0.4, Score: 0.8},
 	}
@@ -315,32 +350,45 @@ func TestJSONShapeYouBlock(t *testing.T) {
 	if err := JSON(&buf, "acme/web", s); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
-
-	var got struct {
-		You *struct {
-			Login          string  `json:"login"`
-			OwnedLOC       int     `json:"owned_loc"`
-			OwnershipShare float64 `json:"ownership_share"`
-			RequestedCRU   float64 `json:"requested_cru"`
-		} `json:"you"`
+	body := buf.String()
+	if strings.Contains(body, `"login"`) {
+		t.Errorf("ownership.you should not carry a login field; got:\n%s", body)
 	}
-	if err := json.NewDecoder(&buf).Decode(&got); err != nil {
-		t.Fatalf("decode JSON: %v", err)
+	got := decodeJSON(t, &buf)
+	if got.Ownership.You == nil {
+		t.Fatalf("missing ownership.you block; want populated when identity is known")
 	}
-	if got.You == nil {
-		t.Fatalf("missing you block; want populated when MyOwnedLOC > 0")
-	}
-	if got.You.Login != "laserlemon" {
-		t.Errorf("you.login = %q, want laserlemon", got.You.Login)
-	}
-	if got.You.OwnershipShare != 0.4 {
-		t.Errorf("you.ownership_share = %v, want 0.4", got.You.OwnershipShare)
+	if got.Ownership.You.Lines != 40 || got.Ownership.You.Share != 0.4 {
+		t.Errorf("ownership.you = %+v, want lines=40 share=0.4", *got.Ownership.You)
 	}
 }
 
-// TestJSONShapeNoYouWhenAbsent verifies the `you` block is omitted from
-// the output when no personal scoring was requested.
-func TestJSONShapeNoYouWhenAbsent(t *testing.T) {
+// TestJSONShapeYouZeroedAtNoStake verifies ownership.you is present (not
+// omitted) when the identity is known but owns nothing, matching the human
+// output's always-shown "Your ownership" row.
+func TestJSONShapeYouZeroedAtNoStake(t *testing.T) {
+	owners := []score.Ownership{
+		{Owner: "@acme/eng", OwnedLOC: 100, Share: 1.0, Score: 2.0},
+	}
+	s := mkScore(100, true, owners, 0, "laserlemon", []string{"@laserlemon"})
+	s.MyOwnedLOC = 0
+
+	var buf bytes.Buffer
+	if err := JSON(&buf, "acme/web", s); err != nil {
+		t.Fatalf("JSON render: %v", err)
+	}
+	got := decodeJSON(t, &buf)
+	if got.Ownership.You == nil {
+		t.Fatalf("ownership.you should be present at zero stake when identity is known")
+	}
+	if got.Ownership.You.Lines != 0 || got.Ownership.You.CRU != 0 {
+		t.Errorf("ownership.you = %+v, want zeroed", *got.Ownership.You)
+	}
+}
+
+// TestJSONShapeNoYouWhenAnon verifies ownership.you is omitted entirely
+// (key and all) when no identity was resolved.
+func TestJSONShapeNoYouWhenAnon(t *testing.T) {
 	owners := []score.Ownership{
 		{Owner: "@acme/eng", OwnedLOC: 100, Share: 1.0, Score: 2.0},
 	}
@@ -414,7 +462,7 @@ func TestHumanFormulaBlock(t *testing.T) {
 	Human(&buf, "acme/web", s, noColorTerm())
 
 	out := stripANSI(buf.String())
-	for _, needle := range []string{"Size", "Risk", "Base", "CRU", "LOC"} {
+	for _, needle := range []string{"Size", "Risk", "Base", "CRU", "lines"} {
 		if !strings.Contains(out, needle) {
 			t.Errorf("formula block missing %q in output:\n%s", needle, out)
 		}
@@ -461,22 +509,30 @@ func TestHumanSummaryRows(t *testing.T) {
 	}
 }
 
-// TestHumanYourOwnershipOmittedWhenZero verifies the > Your ownership row
-// is dropped when the user owns nothing (MyOwnedLOC == 0), so a no-stake
-// run isn't cluttered with a 0.000 row.
-func TestHumanYourOwnershipOmittedWhenZero(t *testing.T) {
+// TestHumanYourOwnershipShownWhenKnown verifies the > Your ownership row
+// renders whenever we know who you are, even at zero stake, so the value
+// is explicit rather than silently missing. It is absent only when no
+// identity was resolved (unauthenticated / no MyLogin).
+func TestHumanYourOwnershipShownWhenKnown(t *testing.T) {
 	owners := []score.Ownership{
 		{Owner: "@acme/eng", OwnedLOC: 100, Share: 1.0, Score: 2.0},
 	}
-	s := mkScore(100, true, owners, 0, "laserlemon", []string{"@laserlemon"})
-	s.MyOwnedLOC = 0
 
+	// Known identity but zero stake: the row should still render.
+	known := mkScore(100, true, owners, 0, "laserlemon", []string{"@laserlemon"})
+	known.MyOwnedLOC = 0
 	var buf bytes.Buffer
-	Human(&buf, "acme/web", s, noColorTerm())
+	Human(&buf, "acme/web", known, noColorTerm())
+	if out := stripANSI(buf.String()); !strings.Contains(out, "Your ownership") {
+		t.Errorf("Your ownership row should render at zero stake when identity is known:\n%s", out)
+	}
 
-	out := stripANSI(buf.String())
-	if strings.Contains(out, "Your ownership") {
-		t.Errorf("Your ownership row should be omitted when MyOwnedLOC==0:\n%s", out)
+	// No identity at all: the row should be absent.
+	anon := mkScore(100, true, owners, 0, "", nil)
+	var buf2 bytes.Buffer
+	Human(&buf2, "acme/web", anon, noColorTerm())
+	if out := stripANSI(buf2.String()); strings.Contains(out, "Your ownership") {
+		t.Errorf("Your ownership row should be absent when no identity is known:\n%s", out)
 	}
 }
 
