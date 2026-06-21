@@ -12,9 +12,6 @@ func TestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Base() != dir {
-		t.Fatalf("Base = %q, want %q", c.Base(), dir)
-	}
 
 	owner, repo, ref := "github", "github", "main"
 	etag := `"abc123def"`
@@ -63,10 +60,10 @@ func TestEtagFileKey(t *testing.T) {
 
 func TestRefKey(t *testing.T) {
 	cases := map[string]string{
-		"":                                         "default",
-		"main":                                     "main",
-		"release/v2":                               "release_v2",
-		"feature/foo-bar":                          "feature_foo-bar",
+		"":                "default",
+		"main":            "main",
+		"release/v2":      "release_v2",
+		"feature/foo-bar": "feature_foo-bar",
 		"68dfd87f47e3757e92953c3a0eaa42cf4c7d0d4f": "68dfd87f47e3757e92953c3a0eaa42cf4c7d0d4f",
 	}
 	for in, want := range cases {

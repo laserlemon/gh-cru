@@ -4,13 +4,13 @@ import "testing"
 
 func TestParse(t *testing.T) {
 	cases := []struct {
-		in            string
-		defOwner      string
-		defRepo       string
-		wantOwner     string
-		wantRepo      string
-		wantNumber    int
-		wantErr       bool
+		in         string
+		defOwner   string
+		defRepo    string
+		wantOwner  string
+		wantRepo   string
+		wantNumber int
+		wantErr    bool
 	}{
 		{"123", "myorg", "myrepo", "myorg", "myrepo", 123, false},
 		{"#123", "myorg", "myrepo", "myorg", "myrepo", 123, false},

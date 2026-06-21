@@ -13,8 +13,9 @@ import (
 
 // UnownedOwnerLabel is the synthetic "owner" used to attribute review
 // cost to LOC that no CODEOWNERS rule matches. Rendered with a `~` gutter
-// marker in the Human output, and surfaced in JSON as an owner row with
-// `name: null` and `type: "unowned"`.
+// marker in the Human output, and surfaced in JSON as the
+// `ownership.unowned` summary row (a {lines, share, cru} object), not as
+// an entry in the `owners` array.
 const UnownedOwnerLabel = "unowned"
 
 // PRScore is the full scoring result for one PR.
@@ -22,19 +23,19 @@ const UnownedOwnerLabel = "unowned"
 // Four distinct CRU numbers are computed; each answers a different question:
 //
 //   - CRU       - owner-agnostic; Size × Risk. The PR's intrinsic
-//                 review weight, as if a single reviewer owned every line.
-//                 Default scalar score: "how big a review is this?".
+//     review weight, as if a single reviewer owned every line.
+//     Default scalar score: "how big a review is this?".
 //   - AuthorCRU - sum across all CODEOWNERS shares PLUS the synthetic
-//                 "unowned" share. Total review burden the PR places on
-//                 the team. Always ≥ CRU() since unowned LOC is attributed
-//                 to a synthetic "unowned" owner rather than being free.
+//     "unowned" share. Total review burden the PR places on
+//     the team. Always ≥ CRU() since unowned LOC is attributed
+//     to a synthetic "unowned" owner rather than being free.
 //   - MyCRU     - what THIS PR actually costs the current user to review,
-//                 based on their @login + team memberships matching the
-//                 CODEOWNERS rules. Each owned file counted once even if
-//                 the user matches multiple owners (self + team).
+//     based on their @login + team memberships matching the
+//     CODEOWNERS rules. Each owned file counted once even if
+//     the user matches multiple owners (self + team).
 //   - Per-owner - the value in each Ownership.Score. Individual reviewer's
-//                 actual scored work for their ownership share (does not
-//                 deduplicate across multiple of the user's identities).
+//     actual scored work for their ownership share (does not
+//     deduplicate across multiple of the user's identities).
 type PRScore struct {
 	PR             ghc.PR
 	LOC            int
@@ -235,8 +236,8 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 	// (real + unowned) sum to exactly 1.0.
 	//
 	// Skipped when there is no unowned LOC. Also rendered with a `~`
-	// gutter marker in the Human formatter and as an owner row with
-	// `name: null` and `type: "unowned"` in JSON.
+	// gutter marker in the Human formatter and as the `ownership.unowned`
+	// summary row in JSON.
 	if result.UnownedChanges > 0 {
 		share := float64(result.UnownedChanges) / float64(denom)
 		result.OwnershipMap[UnownedOwnerLabel] = Ownership{
@@ -272,14 +273,6 @@ func (s PRScore) SortedOwners() []Ownership {
 		}
 	}
 	return out
-}
-
-// TotalScore is the sum of all owner scores. For PRs with no CODEOWNERS,
-// this is Size × Risk (treating the synthetic unowned owner as 100%).
-//
-// Deprecated: prefer AuthorCRU() which says the same thing more precisely.
-func (s PRScore) TotalScore() float64 {
-	return s.AuthorCRU()
 }
 
 // hasAnyLabel returns true when any target appears in labels

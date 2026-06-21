@@ -24,10 +24,6 @@ type Ref struct {
 	Number int
 }
 
-func (r Ref) String() string {
-	return fmt.Sprintf("%s/%s#%d", r.Owner, r.Repo, r.Number)
-}
-
 var (
 	bareNumber = regexp.MustCompile(`^#?(\d+)$`)
 	shorthand  = regexp.MustCompile(`^([^/\s]+)/([^/\s#]+)#(\d+)$`)

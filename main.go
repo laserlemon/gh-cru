@@ -471,7 +471,8 @@ func extractRootFlags(args []string) []string {
 //     --repo or the URL). When gh ever adds --search across repos, we'll
 //     need a per-row repo block; today we don't.
 //   - body, comments, reviews not used by scoring (large payloads).
-//   - reviewRequests / assignees not currently used; punt to v0.3.0+.
+//   - reviewRequests / assignees not used by scoring; omitted to keep the
+//     payload lean.
 var listJSONFields = []string{
 	"url",
 	"number",

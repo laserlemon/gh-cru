@@ -47,9 +47,6 @@ func New(base string) (*Cache, error) {
 	return &Cache{base: base}, nil
 }
 
-// Base returns the cache root for debugging / inspection.
-func (c *Cache) Base() string { return c.base }
-
 // HasBody reports whether a body file exists for the given (ref, ETag).
 func (c *Cache) HasBody(owner, repo, ref, etag string) bool {
 	_, err := os.Stat(c.bodyPath(owner, repo, ref, etag))

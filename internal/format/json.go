@@ -28,6 +28,7 @@ import (
 //     0.166667 back to 0.16666666666666666.)
 //   - Stability: fixed-width output. 2 stays "2.000000", not "2"; a zero
 //     share stays "0.000000". Columns line up and diffs stay quiet.
+//
 // Six places preserves all meaningful precision (PR factors never need
 // more than ~4 significant digits).
 func JSON(w io.Writer, repo string, s score.PRScore) error {

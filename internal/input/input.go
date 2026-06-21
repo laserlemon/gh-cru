@@ -25,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	ghc "github.com/laserlemon/gh-cru/internal/gh"
@@ -222,16 +221,16 @@ type jsonPR struct {
 	} `json:"repository"`
 
 	// Scoring fields (pre-fetched optional)
-	Title       string  `json:"title"`
-	State       string  `json:"state"`
-	Merged      bool    `json:"merged"`
-	MergedAt    string  `json:"mergedAt"` // gh pr list shape: non-empty means merged
-	Additions   int     `json:"additions"`
-	Deletions   int     `json:"deletions"`
+	Title        string `json:"title"`
+	State        string `json:"state"`
+	Merged       bool   `json:"merged"`
+	MergedAt     string `json:"mergedAt"` // gh pr list shape: non-empty means merged
+	Additions    int    `json:"additions"`
+	Deletions    int    `json:"deletions"`
 	ChangedFiles int    `json:"changedFiles"`
-	HeadSHA     string  `json:"headRefOid"`
-	BaseRef     string  `json:"baseRefName"`
-	MergeCommit *struct {
+	HeadSHA      string `json:"headRefOid"`
+	BaseRef      string `json:"baseRefName"`
+	MergeCommit  *struct {
 		Oid string `json:"oid"`
 	} `json:"mergeCommit"`
 	Author *struct {
@@ -389,14 +388,4 @@ func previewBytes(b []byte) string {
 		s = s[:40] + "..."
 	}
 	return s
-}
-
-// StdinIsPipe is a small helper for callers that already hold os.Stdin:
-// returns true when it's not a TTY (i.e. piped or redirected).
-func StdinIsPipe(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) == 0
 }

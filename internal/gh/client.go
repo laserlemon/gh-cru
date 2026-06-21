@@ -31,8 +31,8 @@ type Client struct {
 	disk *cache.Cache // nil if cache init failed (still functional, just no persistence)
 
 	mu       sync.Mutex
-	owners   map[string]ownersEntry        // per-process cache (batch within one CLI run)
-	noOwners map[string]bool               // repos with no CODEOWNERS file at any standard path
+	owners   map[string]ownersEntry // per-process cache (batch within one CLI run)
+	noOwners map[string]bool        // repos with no CODEOWNERS file at any standard path
 
 	authLogin    string
 	authTeams    []string
@@ -599,18 +599,4 @@ func isNotFound(err error) bool {
 		return strings.Contains(err.Error(), "404")
 	}
 	return httpErr.StatusCode == 404
-}
-
-func isForbidden(err error) bool {
-	var httpErr *api.HTTPError
-	if !errors.As(err, &httpErr) {
-		return strings.Contains(err.Error(), "403")
-	}
-	return httpErr.StatusCode == 403
-}
-
-// errAs is errors.As without dragging in the import where unnecessary.
-// Deprecated: kept for backwards compat; use errors.As directly.
-func errAs(err error, target any) bool {
-	return errors.As(err, target)
 }
