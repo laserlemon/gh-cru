@@ -163,7 +163,7 @@ func buildScore(c scenario) score.PRScore {
 	if !c.HasCodeowners {
 		// Mirror real Compute behavior: no CODEOWNERS file → entire PR
 		// is attributed to a single synthetic unowned owner. This makes
-		// AuthorCRU == CRU and the table render a single ~ unowned line.
+		// Totals().CRU == CRU and the table render a single ~ unowned line.
 		result.UnownedChanges = c.LOC
 		denom := c.LOC
 		if denom == 0 {

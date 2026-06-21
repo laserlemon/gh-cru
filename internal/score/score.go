@@ -25,8 +25,8 @@ const UnownedOwnerLabel = "unowned"
 //   - CRU       - owner-agnostic; Size × Risk. The PR's intrinsic
 //     review weight, as if a single reviewer owned every line.
 //     Default scalar score: "how big a review is this?".
-//   - AuthorCRU - sum across all CODEOWNERS shares PLUS the synthetic
-//     "unowned" share. Total review burden the PR places on
+//   - Author    - Totals().CRU: sum across all CODEOWNERS shares PLUS the
+//     synthetic "unowned" share. Total review burden the PR places on
 //     the team. Always ≥ CRU() since unowned LOC is attributed
 //     to a synthetic "unowned" owner rather than being free.
 //   - MyCRU     - what THIS PR actually costs the current user to review,
@@ -73,22 +73,41 @@ func (s PRScore) CRU() float64 {
 	return float64(s.Size) * s.Risk.Multiplier()
 }
 
-// AuthorCRU returns the total review burden the PR places on the team:
-// sum of per-owner scores INCLUDING the synthetic "unowned" owner that
-// captures LOC matched by no CODEOWNERS rule. Always ≥ CRU(); equality
-// when no owners overlap.
+// Totals is the aggregate ownership stake across every owner in a PR,
+// including the synthetic "unowned" owner.
+//
+// Totals.CRU is the "author CRU": the total review burden the PR places
+// on the team, summing per-owner scores INCLUDING the synthetic
+// "unowned" owner that captures LOC matched by no CODEOWNERS rule.
+// Always ≥ CRU(); equality when no owners overlap.
 //
 // For PRs in a repo with no CODEOWNERS file, the entire PR is attributed
-// to the synthetic "unowned" owner, so AuthorCRU() == CRU(). For PRs in
+// to the synthetic "unowned" owner, so Totals().CRU == CRU(). For PRs in
 // a CODEOWNERS repo with full coverage and no overlap, also equals
 // CRU(). Overlap (one line owned by multiple teams) is the only case
-// that drives AuthorCRU > CRU.
-func (s PRScore) AuthorCRU() float64 {
-	total := 0.0
-	for _, o := range s.OwnershipMap {
-		total += o.Score
+// that drives Totals().CRU > CRU.
+type Totals struct {
+	Lines int     // sum of every owner's OwnedLOC
+	Share float64 // sum of every owner's Share (may exceed 1.0 under overlap)
+	CRU   float64 // sum of every owner's Score: the team's total review burden
+}
+
+// Totals aggregates ownership across every owner by summing the rows
+// SortedOwners returns: the same ordered source both formatters render
+// their per-owner rows from. Summing that (rather than ranging
+// OwnershipMap directly) is what guarantees the "All ownership" summary
+// equals the sum of the visible rows in both the human and JSON
+// surfaces. Order is irrelevant to the sums, but sourcing them from the
+// rendered rows makes divergence between the total and the rows above it
+// structurally impossible.
+func (s PRScore) Totals() Totals {
+	var t Totals
+	for _, o := range s.SortedOwners() {
+		t.Lines += o.OwnedLOC
+		t.Share += o.Share
+		t.CRU += o.Score
 	}
-	return total
+	return t
 }
 
 // Ownership is one owner's stake in a PR.
@@ -148,7 +167,7 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 		// No CODEOWNERS file in the repo: the entire PR is unowned.
 		// Populate the synthetic unowned owner so the score and the
 		// owners table are uniform with the CODEOWNERS-but-no-rule-match
-		// case. AuthorCRU sums OwnershipMap; with one unowned entry of
+		// case. Totals().CRU sums OwnershipMap; with one unowned entry of
 		// share=1.0, it equals CRU() (size × risk).
 		//
 		// Safe to use cru.Calculate here because totalLOC == ownedLOC,
@@ -230,9 +249,9 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 	}
 
 	// Synthetic "unowned" owner: attribute the LOC that no CODEOWNERS rule
-	// matched. Without this, AuthorCRU under-counts review reality (those
+	// matched. Without this, Totals().CRU under-counts review reality (those
 	// lines still need a reviewer, just not a CODEOWNERS-named one). With
-	// it, AuthorCRU is always ≥ CRU(), with equality when ownership shares
+	// it, Totals().CRU is always ≥ CRU(), with equality when ownership shares
 	// (real + unowned) sum to exactly 1.0.
 	//
 	// Skipped when there is no unowned LOC. Also rendered with a `~`

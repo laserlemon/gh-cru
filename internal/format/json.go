@@ -83,13 +83,7 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 	// struct zero value.
 	owners := make([]ownerJSON, 0)
 	unowned := rowJSON{Lines: 0, Share: num6(0), CRU: num6(0)}
-	var allLOC int
-	var allShare, allCRU float64
 	for _, o := range s.SortedOwners() {
-		allLOC += o.OwnedLOC
-		allShare += o.Share
-		allCRU += o.Score
-
 		if o.Owner == score.UnownedOwnerLabel {
 			unowned = rowJSON{Lines: o.OwnedLOC, Share: num6(o.Share), CRU: num6(o.Score)}
 			continue
@@ -126,6 +120,7 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		}
 	}
 
+	all := s.Totals()
 	o := out{
 		Repo:           repo,
 		Number:         s.PR.Number,
@@ -139,7 +134,7 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		Ownership: ownershipJSON{
 			Owners:  owners,
 			Unowned: unowned,
-			All:     rowJSON{Lines: allLOC, Share: num6(allShare), CRU: num6(allCRU)},
+			All:     rowJSON{Lines: all.Lines, Share: num6(all.Share), CRU: num6(all.CRU)},
 			You:     you,
 		},
 	}

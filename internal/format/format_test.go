@@ -236,6 +236,52 @@ func TestJSONShapeAllSumsEveryRow(t *testing.T) {
 	}
 }
 
+// TestAllOwnershipAgreesAcrossSurfaces is the regression guard for the
+// "All ownership" total being computed from one source. The human and
+// JSON renderers MUST report identical lines/share/CRU for that summary
+// row; before unification each summed independently (human ranged
+// OwnershipMap, JSON ranged SortedOwners), an unenforced invariant that
+// could silently diverge. An overlap fixture (shares sum past 1.0, lines
+// past the PR's own LOC) makes the totals non-trivial so a regression
+// can't hide behind a 100%/1.0 coincidence.
+func TestAllOwnershipAgreesAcrossSurfaces(t *testing.T) {
+	owners := []score.Ownership{
+		{Owner: "@acme/auth", OwnedLOC: 80, Share: 1.0, Score: 2.0},
+		{Owner: "@acme/web", OwnedLOC: 60, Share: 0.75, Score: 1.5},
+		{Owner: score.UnownedOwnerLabel, OwnedLOC: 20, Share: 0.25, Score: 0.5},
+	}
+	s := mkScore(80, true, owners, 20, "", nil)
+
+	// JSON side: the canonical numbers.
+	var jbuf bytes.Buffer
+	if err := JSON(&jbuf, "acme/web", s); err != nil {
+		t.Fatalf("JSON render: %v", err)
+	}
+	got := decodeJSON(t, &jbuf)
+	all := got.Ownership.All
+
+	// Sanity: the fixture is genuinely non-trivial (overlap present).
+	if all.Lines != 160 {
+		t.Fatalf("fixture all.lines = %d, want 160 (overlap sum)", all.Lines)
+	}
+
+	// Human side: the same total must appear, formatted exactly as
+	// addSummaryRow writes it (%d lines, %.1f%% share, %.3f CRU).
+	var hbuf bytes.Buffer
+	Human(&hbuf, "acme/web", s, noColorTerm())
+	out := stripANSI(hbuf.String())
+
+	wantLines := fmt.Sprintf("%d", all.Lines)
+	wantShare := fmt.Sprintf("%.1f%%", all.Share*100)
+	wantCRU := fmt.Sprintf("%.3f", all.CRU)
+	for _, needle := range []string{wantLines, wantShare, wantCRU} {
+		if !strings.Contains(out, needle) {
+			t.Errorf("human All-ownership total missing %q (JSON reports lines=%d share=%v cru=%v):\n%s",
+				needle, all.Lines, all.Share, all.CRU, out)
+		}
+	}
+}
+
 // TestJSONShapeRoundsFloats verifies that every float64 field in the
 // JSON output is rounded to ≤ 6 decimal places. Catches regressions if
 // someone adds a new float field and forgets to pass it through round6.

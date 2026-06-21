@@ -50,7 +50,7 @@ func closeTo(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
 // TestComputeNoCodeowners verifies that when the repo has no CODEOWNERS
 // file at all (owners == nil), the entire PR is attributed to a single
-// synthetic "unowned" owner. This makes AuthorCRU == CRU and renders a
+// synthetic "unowned" owner. This makes Totals().CRU == CRU and renders a
 // uniform 1-row table.
 func TestComputeNoCodeowners(t *testing.T) {
 	p := pr(100)
@@ -73,8 +73,8 @@ func TestComputeNoCodeowners(t *testing.T) {
 	if !closeTo(o.Share, 1.0) {
 		t.Errorf("unowned Share = %v, want 1.0", o.Share)
 	}
-	if !closeTo(s.AuthorCRU(), s.CRU()) {
-		t.Errorf("AuthorCRU = %v, CRU = %v, want equal", s.AuthorCRU(), s.CRU())
+	if !closeTo(s.Totals().CRU, s.CRU()) {
+		t.Errorf("Totals().CRU = %v, CRU = %v, want equal", s.Totals().CRU, s.CRU())
 	}
 	if got, want := s.OwnerOrder, []string{UnownedOwnerLabel}; len(got) != 1 || got[0] != want[0] {
 		t.Errorf("OwnerOrder = %v, want %v", got, want)
@@ -101,8 +101,8 @@ func TestComputeCodeownersNoMatch(t *testing.T) {
 	if _, ok := s.OwnershipMap[UnownedOwnerLabel]; !ok {
 		t.Fatalf("missing synthetic unowned owner")
 	}
-	if !closeTo(s.AuthorCRU(), s.CRU()) {
-		t.Errorf("AuthorCRU = %v, CRU = %v, want equal (full unowned)", s.AuthorCRU(), s.CRU())
+	if !closeTo(s.Totals().CRU, s.CRU()) {
+		t.Errorf("Totals().CRU = %v, CRU = %v, want equal (full unowned)", s.Totals().CRU, s.CRU())
 	}
 }
 
@@ -121,14 +121,14 @@ func TestComputeFullCoverage(t *testing.T) {
 	if _, ok := s.OwnershipMap[UnownedOwnerLabel]; ok {
 		t.Errorf("unexpected synthetic unowned owner with full coverage")
 	}
-	if !closeTo(s.AuthorCRU(), s.CRU()) {
-		t.Errorf("AuthorCRU = %v, CRU = %v, want equal (no overlap, no gap)", s.AuthorCRU(), s.CRU())
+	if !closeTo(s.Totals().CRU, s.CRU()) {
+		t.Errorf("Totals().CRU = %v, CRU = %v, want equal (no overlap, no gap)", s.Totals().CRU, s.CRU())
 	}
 }
 
 // TestComputePartialCoverage verifies the unowned-row-with-real-owners
 // case: some files are owned, some aren't. The shares should sum to 1.0
-// and AuthorCRU should equal CRU.
+// and Totals().CRU should equal CRU.
 func TestComputePartialCoverage(t *testing.T) {
 	p := pr(100)
 	files := []ghc.File{
@@ -159,16 +159,16 @@ func TestComputePartialCoverage(t *testing.T) {
 	if !closeTo(eng.Share+un.Share, 1.0) {
 		t.Errorf("shares sum to %v, want 1.0", eng.Share+un.Share)
 	}
-	if !closeTo(s.AuthorCRU(), s.CRU()) {
-		t.Errorf("AuthorCRU = %v, CRU = %v, want equal (no overlap)", s.AuthorCRU(), s.CRU())
+	if !closeTo(s.Totals().CRU, s.CRU()) {
+		t.Errorf("Totals().CRU = %v, CRU = %v, want equal (no overlap)", s.Totals().CRU, s.CRU())
 	}
 }
 
-// TestComputeOverlap verifies the case that breaks the "AuthorCRU == CRU"
+// TestComputeOverlap verifies the case that breaks the "Totals().CRU == CRU"
 // equality: a CODEOWNERS rule with multiple owners (the only way the
 // codeowners library produces multiple owners on the same file, since
 // it uses last-match-wins semantics across rules). Each listed owner
-// gets 100% share, so AuthorCRU = 2 × CRU.
+// gets 100% share, so Totals().CRU = 2 × CRU.
 func TestComputeOverlap(t *testing.T) {
 	p := pr(50)
 	files := []ghc.File{file("api/foo.go", 50)}
@@ -184,12 +184,12 @@ func TestComputeOverlap(t *testing.T) {
 			t.Errorf("%s.Share = %v, want 1.0 (multi-owner rule)", o.Owner, o.Share)
 		}
 	}
-	if s.AuthorCRU() <= s.CRU() {
-		t.Errorf("AuthorCRU = %v should EXCEED CRU = %v (overlap doubles)", s.AuthorCRU(), s.CRU())
+	if s.Totals().CRU <= s.CRU() {
+		t.Errorf("Totals().CRU = %v should EXCEED CRU = %v (overlap doubles)", s.Totals().CRU, s.CRU())
 	}
-	if !closeTo(s.AuthorCRU(), 2*s.CRU()) {
-		t.Errorf("AuthorCRU = %v, want 2 × CRU = %v (two owners, full coverage each)",
-			s.AuthorCRU(), 2*s.CRU())
+	if !closeTo(s.Totals().CRU, 2*s.CRU()) {
+		t.Errorf("Totals().CRU = %v, want 2 × CRU = %v (two owners, full coverage each)",
+			s.Totals().CRU, 2*s.CRU())
 	}
 }
 
@@ -318,13 +318,13 @@ func TestCRUEqualsSizeTimesRisk(t *testing.T) {
 	}
 }
 
-// TestAuthorCRUEmpty handles the edge: an empty OwnershipMap (which
+// TestTotalsEmpty handles the edge: an empty OwnershipMap (which
 // shouldn't happen via Compute but is reachable via zero-value PRScore).
-// AuthorCRU should be 0, not panic.
-func TestAuthorCRUEmpty(t *testing.T) {
+// Totals().CRU should be 0, not panic.
+func TestTotalsEmpty(t *testing.T) {
 	s := PRScore{OwnershipMap: map[string]Ownership{}}
-	if got := s.AuthorCRU(); got != 0 {
-		t.Errorf("AuthorCRU on empty map = %v, want 0", got)
+	if got := s.Totals().CRU; got != 0 {
+		t.Errorf("Totals().CRU on empty map = %v, want 0", got)
 	}
 }
 

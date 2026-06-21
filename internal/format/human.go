@@ -187,19 +187,14 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 
 	// Summary rows, gray+bold to frame them as computed totals:
 	//   ~ Unowned        lines matched by no CODEOWNERS rule (only if any)
-	//   + All ownership  sum across every owner incl. unowned = AuthorCRU
+	//   + All ownership  sum across every owner incl. unowned = Totals().CRU
 	//   > Your ownership your slice (only when you own something)
 	if u, ok := s.OwnershipMap[score.UnownedOwnerLabel]; ok && u.OwnedLOC > 0 {
 		addSummaryRow(tp, "~", "Unowned", u.OwnedLOC, u.Share, u.Score, color)
 	}
 
-	var allLOC int
-	var allShare float64
-	for _, o := range s.OwnershipMap {
-		allLOC += o.OwnedLOC
-		allShare += o.Share
-	}
-	addSummaryRow(tp, "+", "All ownership", allLOC, allShare, s.AuthorCRU(), color)
+	all := s.Totals()
+	addSummaryRow(tp, "+", "All ownership", all.Lines, all.Share, all.CRU, color)
 
 	// Your ownership: shown whenever we know who you are, even if your
 	// share is zero. Keying on identity (not MyOwnedLOC > 0) keeps the
