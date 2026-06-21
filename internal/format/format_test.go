@@ -3,6 +3,7 @@ package format
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -298,7 +299,6 @@ func TestJSONShapeOwnerTypes(t *testing.T) {
 	}
 }
 
-
 // TestJSONShapeYouBlock verifies the optional `you` block surfaces with
 // the correct ownership_share field name and only renders when the user
 // has any owned LOC.
@@ -357,50 +357,54 @@ func TestJSONShapeNoYouWhenAbsent(t *testing.T) {
 
 // --- table marker selection ----------------------------------------------
 
-// TestHumanMarkers verifies the four marker variants render in the
-// owner table. End-to-end through Human() with color disabled and TTY
-// false so we can string-match against plain output.
+// TestHumanMarkers verifies the marker glyphs render on the right rows:
+// the three data-row markers (=, *, •) keyed to owner relationship, and
+// the three summary-row markers (~, +, >). End-to-end through Human()
+// with color disabled and TTY false so we can string-match against plain
+// (tab-separated) output.
 func TestHumanMarkers(t *testing.T) {
 	owners := []score.Ownership{
-		{Owner: "@laserlemon", OwnedLOC: 25, Share: 0.25, Score: 0.5},  // direct → =
+		{Owner: "@laserlemon", OwnedLOC: 25, Share: 0.25, Score: 0.5},    // direct → =
 		{Owner: "@acme/big-orca", OwnedLOC: 25, Share: 0.25, Score: 0.5}, // team → *
 		{Owner: "@acme/web-team", OwnedLOC: 25, Share: 0.25, Score: 0.5}, // other → •
 		{Owner: score.UnownedOwnerLabel, OwnedLOC: 25, Share: 0.25, Score: 0.5},
 	}
 	s := mkScore(100, true, owners, 25, "laserlemon",
 		[]string{"@laserlemon", "@acme/big-orca"})
-	s.MyOwnedLOC = 25
-	s.MyShare = 0.25
-	s.MyCRU = 0.5
+	s.MyOwnedLOC = 50
+	s.MyShare = 0.5
+	s.MyCRU = 1.0
 
 	var buf bytes.Buffer
 	Human(&buf, "acme/web", s, noColorTerm())
 
 	out := stripANSI(buf.String())
-	// Verify each marker shows up on the right row.
+	// Each marker should appear next to its row label. In non-TTY mode the
+	// tableprinter uses tab separators, so assert with a tab between the
+	// marker and the row label.
 	tests := []struct {
 		marker string
-		owner  string
+		label  string
 	}{
-		{"=", "laserlemon"},
-		{"*", "acme/big-orca"},
-		{"•", "acme/web-team"},
-		{"~", "unowned"},
+		{"=", "laserlemon"},     // direct @login data row
+		{"*", "acme/big-orca"},  // team-you data row
+		{"•", "acme/web-team"},  // someone-else data row
+		{"~", "Unowned"},        // unowned summary row
+		{"+", "All ownership"},  // all-ownership summary row
+		{">", "Your ownership"}, // your-ownership summary row
 	}
 	for _, tc := range tests {
-		// In non-TTY mode the tableprinter uses tab separators between
-		// columns. Build the assertion with a tab between marker and owner.
-		needle := tc.marker + "\t" + tc.owner
+		needle := tc.marker + "	" + tc.label
 		if !strings.Contains(out, needle) {
 			t.Errorf("missing %q row in output:\n%s", needle, out)
 		}
 	}
 }
 
-// TestHumanShowsTotalCRU verifies the header block always renders both
-// Normal CRU and Total CRU lines, even on a no-CODEOWNERS PR where they
-// are equal.
-func TestHumanShowsTotalCRU(t *testing.T) {
+// TestHumanFormulaBlock verifies the Size/Risk/Base formula block renders
+// with the grade, factor value, and "CRU" unit. The base value is the
+// owner-agnostic Size × Risk score.
+func TestHumanFormulaBlock(t *testing.T) {
 	owners := []score.Ownership{
 		{Owner: score.UnownedOwnerLabel, OwnedLOC: 50, Share: 1.0, Score: 1.5},
 	}
@@ -410,95 +414,80 @@ func TestHumanShowsTotalCRU(t *testing.T) {
 	Human(&buf, "acme/web", s, noColorTerm())
 
 	out := stripANSI(buf.String())
-	for _, line := range []string{"Normal CRU", "Total CRU"} {
-		if !strings.Contains(out, line) {
-			t.Errorf("missing %q line in output:\n%s", line, out)
+	for _, needle := range []string{"Size", "Risk", "Base", "CRU", "LOC"} {
+		if !strings.Contains(out, needle) {
+			t.Errorf("formula block missing %q in output:\n%s", needle, out)
+		}
+	}
+	// The base value (Size × Risk) should be present, formatted to 3dp.
+	base := fmt.Sprintf("%.3f", s.CRU())
+	if !strings.Contains(out, base) {
+		t.Errorf("formula block missing base value %s in output:\n%s", base, out)
+	}
+	// The retired header labels must be gone.
+	for _, gone := range []string{"Normal CRU", "Total CRU", "Your CRU", "Size label", "Size factor", "Risk multiplier"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("output still has retired label %q:\n%s", gone, out)
 		}
 	}
 }
 
-// TestHumanShowsUnownedRowEvenWithoutCodeowners verifies the unified
-// table rendering: even when HasCodeowners=false, the table shows up
-// with a single ~ unowned row.
-func TestHumanShowsUnownedRowEvenWithoutCodeowners(t *testing.T) {
+// TestHumanSummaryRows verifies the three computed-total rows append to the
+// owner table: ~ Unowned (when unowned LOC exists), + All ownership
+// (always), and > Your ownership (only when the user owns something).
+func TestHumanSummaryRows(t *testing.T) {
 	owners := []score.Ownership{
-		{Owner: score.UnownedOwnerLabel, OwnedLOC: 50, Share: 1.0, Score: 1.5},
+		{Owner: "@laserlemon", OwnedLOC: 40, Share: 0.4, Score: 0.8},
+		{Owner: "@acme/eng", OwnedLOC: 40, Share: 0.4, Score: 0.8},
+		{Owner: score.UnownedOwnerLabel, OwnedLOC: 20, Share: 0.2, Score: 0.4},
 	}
-	s := mkScore(50, false, owners, 50, "", nil)
+	s := mkScore(100, true, owners, 20, "laserlemon", []string{"@laserlemon"})
+	s.MyOwnedLOC = 40
+	s.MyShare = 0.4
+	s.MyCRU = 0.8
 
 	var buf bytes.Buffer
 	Human(&buf, "acme/web", s, noColorTerm())
 
 	out := stripANSI(buf.String())
-	if !strings.Contains(out, "CODE OWNER") {
-		t.Errorf("missing CODE OWNER header; table should always render:\n%s", out)
+	for _, needle := range []string{"Unowned", "All ownership", "Your ownership"} {
+		if !strings.Contains(out, needle) {
+			t.Errorf("missing summary row %q in output:\n%s", needle, out)
+		}
 	}
-	if !strings.Contains(out, "~") || !strings.Contains(out, "unowned") {
-		t.Errorf("missing ~ unowned row:\n%s", out)
+	// SHARE renders as a percentage now, not a bare fraction.
+	if !strings.Contains(out, "%") {
+		t.Errorf("SHARE column should be a percentage:\n%s", out)
 	}
 }
 
-// TestHumanShareColumn verifies the SHARE header (formerly FACTOR).
-func TestHumanShareColumn(t *testing.T) {
+// TestHumanYourOwnershipOmittedWhenZero verifies the > Your ownership row
+// is dropped when the user owns nothing (MyOwnedLOC == 0), so a no-stake
+// run isn't cluttered with a 0.000 row.
+func TestHumanYourOwnershipOmittedWhenZero(t *testing.T) {
 	owners := []score.Ownership{
 		{Owner: "@acme/eng", OwnedLOC: 100, Share: 1.0, Score: 2.0},
 	}
-	s := mkScore(100, true, owners, 0, "", nil)
+	s := mkScore(100, true, owners, 0, "laserlemon", []string{"@laserlemon"})
+	s.MyOwnedLOC = 0
 
 	var buf bytes.Buffer
 	Human(&buf, "acme/web", s, noColorTerm())
 
 	out := stripANSI(buf.String())
-	if !strings.Contains(out, "SHARE") {
-		t.Errorf("missing SHARE header:\n%s", out)
-	}
-	if strings.Contains(out, "FACTOR") {
-		t.Errorf("output still has stale FACTOR header:\n%s", out)
-	}
-}
-
-// --- color hashing -------------------------------------------------------
-
-// TestHeadingColorDeterministic verifies that the same repo name always
-// hashes to the same color (callers rely on this for visual grouping).
-func TestHeadingColorDeterministic(t *testing.T) {
-	a := headingColor("acme/web", true)("acme/web")
-	b := headingColor("acme/web", true)("acme/web")
-	if a != b {
-		t.Errorf("headingColor not deterministic: %q != %q", a, b)
-	}
-}
-
-// TestPRNumberColorDeterministic verifies the same property for PR numbers.
-func TestPRNumberColorDeterministic(t *testing.T) {
-	a := prNumberColor(1234, true)("#1234")
-	b := prNumberColor(1234, true)("#1234")
-	if a != b {
-		t.Errorf("prNumberColor not deterministic: %q != %q", a, b)
-	}
-}
-
-// TestColorsRespectsDisabled verifies that color=false returns the
-// identity colorizer (no ANSI escape codes in output).
-func TestColorsRespectsDisabled(t *testing.T) {
-	got := headingColor("acme/web", false)("acme/web")
-	if got != "acme/web" {
-		t.Errorf("headingColor(color=false) returned %q, want plain text", got)
-	}
-	got2 := prNumberColor(1234, false)("#1234")
-	if got2 != "#1234" {
-		t.Errorf("prNumberColor(color=false) returned %q, want plain text", got2)
+	if strings.Contains(out, "Your ownership") {
+		t.Errorf("Your ownership row should be omitted when MyOwnedLOC==0:\n%s", out)
 	}
 }
 
 // TestDisplayOwnerStripsAt verifies the @ prefix is removed for display.
 func TestDisplayOwnerStripsAt(t *testing.T) {
 	cases := map[string]string{
-		"@laserlemon":     "laserlemon",
-		"@acme/eng":       "acme/eng",
-		"laserlemon":      "laserlemon",   // no @, unchanged
-		"":                "",
-		"@@double":        "@double",      // only first @ stripped
+		"@laserlemon": "laserlemon",
+		"@acme/eng":   "acme/eng",
+		"laserlemon":  "laserlemon", // no @, unchanged
+		"":            "",
+		"@@double":    "@double", // only first @ stripped
 	}
 	for in, want := range cases {
 		if got := displayOwner(in); got != want {

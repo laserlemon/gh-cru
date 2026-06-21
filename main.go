@@ -79,7 +79,7 @@ Run "gh cru view --help" for the PR argument forms gh cru view accepts.`,
 	root.PersistentFlags().BoolVar(&noOwnersFlag, "skip-ownership", false,
 		"Skip CODEOWNERS lookups; treat ownership as 1.0 (size×risk only)")
 	root.PersistentFlags().BoolVar(&noPersonalFlag, "skip-personal", false,
-		"Skip fetching your team memberships; no \"Your CRU\" line")
+		"Skip fetching your team memberships; no \"Your ownership\" row")
 	root.PersistentFlags().StringSliceVar(&highRiskLabelsFlag, "high-risk-label", []string{"risk:high"},
 		"PR label(s) that mark high risk (4× multiplier). Repeat or comma-separate for multiple")
 	root.PersistentFlags().StringSliceVar(&mediumRiskLabelsFlag, "medium-risk-label", []string{"risk:medium"},
@@ -582,7 +582,7 @@ func resolveMe(client *ghc.Client) (string, []string, bool) {
 	}
 	login, ids, ok, err := client.AuthIdentities()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warn: could not resolve your identities: %v (continuing without \"Your CRU\")\n", err)
+		fmt.Fprintf(os.Stderr, "warn: could not resolve your identities: %v (continuing without \"Your ownership\")\n", err)
 		return "", nil, true
 	}
 	return login, ids, ok

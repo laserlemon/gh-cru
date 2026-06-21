@@ -28,6 +28,7 @@ import (
 // the synthetic case (overlap, my-team membership, unowned LOC, etc).
 type scenario struct {
 	Name          string
+	Title         string
 	Repo          string
 	Number        int
 	LOC           int
@@ -51,6 +52,7 @@ func main() {
 	cases := []scenario{
 		{
 			Name:          "single owner, no overlap (the trivial path)",
+			Title:         "Add rate limiting to webhook dispatcher",
 			Repo:          "acme/web",
 			Number:        1234,
 			LOC:           34,
@@ -59,14 +61,16 @@ func main() {
 			Owners:        []owner{{Name: "@acme/web-team", LOC: 34}},
 		},
 		{
-			Name:          "no CODEOWNERS file at all (whole PR rendered as ~ unowned)",
-			Repo:          "acme/sandbox",
-			Number:        42,
-			LOC:           48,
-			Risk:          cru.RiskLow,
+			Name:   "no CODEOWNERS file at all (whole PR rendered as ~ unowned)",
+			Title:  "Bump sandbox image to node 22",
+			Repo:   "acme/sandbox",
+			Number: 42,
+			LOC:    48,
+			Risk:   cru.RiskLow,
 		},
 		{
 			Name:          "owners + partial unowned LOC (mixed coverage)",
+			Title:         "Refactor session store and add Redis backend",
 			Repo:          "acme/web",
 			Number:        1236,
 			LOC:           200,
@@ -79,7 +83,8 @@ func main() {
 			UnownedLOC: 30,
 		},
 		{
-			Name:          "multiple owners with overlap (Total CRU exceeds Normal CRU)",
+			Name:          "multiple owners with overlap (All ownership exceeds Base)",
+			Title:         "Tighten auth middleware on the billing routes",
 			Repo:          "acme/web",
 			Number:        1235,
 			LOC:           80,
@@ -92,6 +97,7 @@ func main() {
 		},
 		{
 			Name:          "everything at once: direct @login, team, other, unowned, high risk",
+			Title:         "Migrate payments ledger to double-entry schema",
 			Repo:          "acme/payments",
 			Number:        78,
 			LOC:           240,
@@ -107,7 +113,8 @@ func main() {
 			MyIdentities: []string{"@laserlemon", "@acme/big-orca"},
 		},
 		{
-			Name:          "different repo: heading color hash differentiates from prior cases",
+			Name:          "medium risk, different repo (amber risk tier)",
+			Title:         "Add pagination to the public list endpoints",
 			Repo:          "acme/api",
 			Number:        1235,
 			LOC:           34,
@@ -140,7 +147,7 @@ func buildScore(c scenario) score.PRScore {
 	result := score.PRScore{
 		PR: ghc.PR{
 			Number: c.Number,
-			Title:  "demo",
+			Title:  c.Title,
 			Author: "demo",
 			State:  "open",
 		},

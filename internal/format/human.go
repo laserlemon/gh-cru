@@ -16,27 +16,25 @@ import (
 //
 // Layout:
 //
-//	owner/repo#N                 (always-on, color hashed by repo)
+//	<title>  owner/repo#N            (bold title + gray ref, mirrors gh pr view)
 //
-//	LOC              <n>
-//	Size label       <bucket>
-//	Size factor      <f>
-//	Risk label       <label>
-//	Risk multiplier  <r>
-//	Normal CRU       <c>
-//	Total CRU        <sum across owners; team review burden>
-//	Your CRU         <c>            (only when MyLogin is known)
+//	Size  <bucket>  <factor>  <n> LOC
+//	Risk  <tier>    <mult>
+//	Base            <base>    CRU    (Base = Size × Risk, the review weight)
 //
-//	CODE OWNER                       LOC  FACTOR    CRU
-//	  acme/some-team                  34  0.895  0.971
-//	* acme/team-you-own                4  0.105  0.114
+//	   CODE OWNER       LOC   SHARE    CRU
+//	*  acme/some-team    34   29.3%  0.585   (named owners: plain rows)
+//	•  acme/other-team   80   68.9%  1.378
+//	~  Unowned            2    1.7%  0.034   (summary rows: gray+bold)
+//	+  All ownership    116  100.0%  2.000
+//	>  Your ownership     0    0.0%  0.000   (only when you own something)
 //
 //	Calculating your personal CRU requires read:org authorization to
 //	read your team memberships.   (only when teams couldn't be enumerated)
 //
-// PR title/state/author/diffstat are omitted: callers running batches
-// typically already know what PR they asked for, and `gh pr view`
-// covers the metadata.
+// PR state/author/diffstat are omitted: callers running batches typically
+// already know what PR they asked for, and `gh pr view` covers the
+// metadata.
 func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	isTTY := t.IsTerminalOutput()
 	color := t.IsColorEnabled()
@@ -45,37 +43,90 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 		width = 80
 	}
 
-	// Always-on heading. The `owner/repo` portion takes a deterministic
-	// color hashed from the repo name (so a batch of PRs from one repo
-	// visually groups together); the `#N` portion takes its own
-	// deterministic color hashed from the PR number (so distinct PRs in
-	// the same repo are still differentiable at a glance). Both palettes
-	// are bold so the heading anchors the eye above each PR's block.
-	// The two palettes are chosen to be visually distinct from each other.
-	repoColor := headingColor(repo, color)
-	prColor := prNumberColor(s.PR.Number, color)
-	heading := repoColor(repo) + prColor(fmt.Sprintf("#%d", s.PR.Number))
-	fmt.Fprintf(w, "%s\n\n", heading)
-
-	// Header block: %-16s pads labels to 16 chars (`Risk multiplier` at 15 +
-	// 1-space gap), matching the visual alignment in the user's mockup.
-	// Same on TTY and pipe. Labels render in the same gray used for table
-	// headers; `label` colorizes after padding so visible-width math
-	// stays correct.
-	fmt.Fprintf(w, "%s %d\n", label("LOC", color), s.LOC)
-	fmt.Fprintf(w, "%s %s\n", label("Size label", color), sizeColor(s.Size.String(), s.Size.String(), color))
-	fmt.Fprintf(w, "%s %s\n", label("Size factor", color), sizeColor(fmt.Sprintf("%.3f", float64(s.Size)), s.Size.String(), color))
-	rl := s.Risk.String()
-	fmt.Fprintf(w, "%s %s\n", label("Risk label", color), riskColor(rl, s.Risk, color))
-	fmt.Fprintf(w, "%s %s\n", label("Risk multiplier", color), riskColor(fmt.Sprintf("%.3f", s.Risk.Multiplier()), s.Risk, color))
-	fmt.Fprintf(w, "%s %.3f\n", label("Normal CRU", color), s.CRU())
-	fmt.Fprintf(w, "%s %.3f\n", label("Total CRU", color), s.AuthorCRU())
-	if s.MyLogin != "" {
-		fmt.Fprintf(w, "%s %.3f\n", label("Your CRU", color), s.MyCRU)
+	// Always-on heading, mirroring `gh pr view`: the PR title in bold,
+	// then a gray `owner/repo#N` reference on the same line. gh renders
+	// its title in bold default-fg and incidental refs in muted gray, so
+	// following both keeps gh cru's heading consistent with the rest of
+	// the gh CLI. No state (Open/Merged/Closed) line: a CRU score isn't a
+	// PR view, so that row would just be noise.
+	ref := muted(fmt.Sprintf("%s#%d", repo, s.PR.Number), color)
+	if title := s.PR.Title; title != "" {
+		if color {
+			title = colorBold(title)
+		}
+		fmt.Fprintf(w, "%s %s\n\n", title, ref)
+	} else {
+		fmt.Fprintf(w, "%s\n\n", ref)
 	}
+
+	// Formula block: the three factors that make up the base CRU. Rendered
+	// through the same tableprinter as the owner table (see
+	// writeFormulaBlock) so its columns content-size and space themselves
+	// identically: a 2-space gap between columns, numeric values right-
+	// aligned (so the factors line up on the decimal), and the "N LOC" /
+	// "CRU" annotation in its own trailing column. Base is Size × Risk, the
+	// owner-agnostic review weight; "CRU" rides as a trailing gray unit so
+	// every number below it is silently understood to be in CRU.
+	writeFormulaBlock(w, s, isTTY, color, width)
 
 	fmt.Fprintln(w)
 	writeOwnerTable(w, s, isTTY, color, width)
+}
+
+// writeFormulaBlock renders the Size/Risk/Base factor block as a content-
+// sized table so its columns obey the same rules as the owner table: each
+// column is as wide as its widest cell, columns are separated by the
+// tableprinter's standard 2-space delimiter, and the numeric value column
+// is right-aligned so the factors line up on the decimal point. The grade
+// (Size bucket / Risk tier) carries its semantic color; the value carries
+// none (default fg, theme-safe); the trailing "N LOC" / "CRU" annotation
+// is gray. Risk has no annotation and Base has no grade, so those cells are
+// empty but still occupy their column, keeping every value and the "CRU"
+// unit aligned under the rows above. Like the owner table, this degrades to
+// tab-separated output off a TTY.
+func writeFormulaBlock(w io.Writer, s score.PRScore, isTTY, color bool, width int) {
+	tp := tableprinter.New(w, isTTY, width)
+
+	labelColor := func(v string) string { return v }
+	mutedColor := func(v string) string { return v }
+	if color {
+		labelColor = colorMutedBold
+		mutedColor = colorMuted
+	}
+
+	sizeBucket := s.Size.String()
+
+	// Size: grade = bucket (size color), value = size factor, annotation
+	// = "N LOC". The first row defines the column count (4), so it carries
+	// every column even though Risk omits the annotation.
+	tp.AddField("Size", tableprinter.WithColor(labelColor))
+	tp.AddField(sizeBucket, tableprinter.WithColor(func(v string) string {
+		return sizeColor(v, sizeBucket, color)
+	}))
+	tp.AddField(fmt.Sprintf("%.3f", float64(s.Size)), tableprinter.WithPadding(padLeft))
+	tp.AddField(fmt.Sprintf("%d LOC", s.LOC), tableprinter.WithColor(mutedColor))
+	tp.EndRow()
+
+	// Risk: grade = tier (risk color), value = risk multiplier, no annotation.
+	tp.AddField("Risk", tableprinter.WithColor(labelColor))
+	tp.AddField(s.Risk.String(), tableprinter.WithColor(func(v string) string {
+		return riskColor(v, s.Risk, color)
+	}))
+	tp.AddField(fmt.Sprintf("%.3f", s.Risk.Multiplier()), tableprinter.WithPadding(padLeft))
+	tp.EndRow()
+
+	// Base: no grade (empty cell holds the column), value = Size × Risk,
+	// annotation = "CRU" (the unit). The empty grade keeps Base's value
+	// aligned under the Size factor and Risk multiplier above it.
+	tp.AddField("Base", tableprinter.WithColor(labelColor))
+	tp.AddField("")
+	tp.AddField(fmt.Sprintf("%.3f", s.CRU()), tableprinter.WithPadding(padLeft))
+	tp.AddField("CRU", tableprinter.WithColor(mutedColor))
+	tp.EndRow()
+
+	if err := tp.Render(); err != nil {
+		fmt.Fprintf(w, "  (formula render error: %v)\n", err)
+	}
 }
 
 // writeOwnerTable uses cli/go-gh's tableprinter so column widths, padding,
@@ -86,29 +137,28 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 //
 // Layout uses a dedicated 1-char gutter column for the row-type marker:
 //
-//	_  CODE OWNER             LOC   SHARE    CRU
-//	=  laserlemon              20   0.400  0.800   (direct match, blue+b)
-//	*  acme/big-orca           80   0.400  0.800   (team match, blue)
-//	•  acme/web-team          120   0.600  1.200   (someone else)
-//	~  unowned                 60   0.300  0.600   (no owner, dim marker+name)
+//	   CODE OWNER             LOC   SHARE    CRU
+//	=  laserlemon              20   40.0%  0.800   (direct match)
+//	*  acme/big-orca           80   40.0%  0.800   (team you're on)
+//	•  acme/web-team          120   60.0%  1.200   (someone else)
+//	~  Unowned                 60   30.0%  0.600   (no CODEOWNERS rule)
+//	+  All ownership          200  103.4%  2.069   (team review burden)
+//	>  Your ownership          61   52.6%  1.052   (your slice; if any)
 //
-// Markers (color matches the OWNER cell so they read as one unit):
-//   - `=` blue+bold    - direct @login match (you specifically own these lines)
-//   - `*` blue         - team membership match (a team you're on owns these)
-//   - `•` default      - someone else owns these
-//   - `~` dim          - synthetic unowned row (no CODEOWNERS rule matched)
-//
-// All four are 1 column wide so owner names stay vertically aligned.
-// The marker column header is a single underlined space, matching the
-// `gh pr checks` convention for status-marker columns.
+// Data rows (=, *, •) render plain: the marker glyph alone signals
+// whether a row is yours (=/*), so no color is needed and the numeric
+// columns read cleanly. The three trailing summary rows (~, +, >) render
+// in gray+bold, matching the formula block's labels, so they frame the
+// raw owner data as computed totals. SHARE is a percentage; CRU is each
+// row's review burden. The marker column header is a single underlined
+// space, matching the `gh pr checks` convention for status-marker columns.
 func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int) {
 	tp := tableprinter.New(w, isTTY, width)
 
-	// Header. Right-align numeric columns; underline + dim styling matches
-	// gh CLI's tableprinter convention (iostreams.ColorScheme.TableHeader).
-	// The marker column header is a single space, styled with the same
-	// underline + dim treatment so it visually reads as `_` and stays
-	// aligned with the data column below.
+	// Header. Right-align numeric columns; underline + brightblack styling
+	// matches gh CLI's tableprinter convention (iostreams.ColorScheme.
+	// TableHeader). The marker column header is a single space, styled the
+	// same so it reads as an underlined gutter aligned with the markers.
 	headerColor := func(v string) string { return v }
 	if color {
 		headerColor = colorTableHeader
@@ -123,11 +173,36 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 	mySet := makeIdentitySet(s.MyIdentities)
 	myLoginKey := "@" + strings.ToLower(s.MyLogin)
 
+	// Data rows: every real CODEOWNERS owner, in first-seen order. The
+	// synthetic "unowned" owner is held back and rendered as a summary row
+	// below, so the data section is strictly the named owners.
 	for _, o := range s.SortedOwners() {
-		isUnowned := o.Owner == score.UnownedOwnerLabel
+		if o.Owner == score.UnownedOwnerLabel {
+			continue
+		}
 		isDirectYou := s.MyLogin != "" && strings.ToLower(o.Owner) == myLoginKey
 		isTeamYou := !isDirectYou && mySet[strings.ToLower(o.Owner)]
-		addOwnerRow(tp, o, isDirectYou, isTeamYou, isUnowned, color)
+		addOwnerRow(tp, o, isDirectYou, isTeamYou)
+	}
+
+	// Summary rows, gray+bold to frame them as computed totals:
+	//   ~ Unowned        LOC matched by no CODEOWNERS rule (only if any)
+	//   + All ownership  sum across every owner incl. unowned = AuthorCRU
+	//   > Your ownership your slice (only when you own something)
+	if u, ok := s.OwnershipMap[score.UnownedOwnerLabel]; ok && u.OwnedLOC > 0 {
+		addSummaryRow(tp, "~", "Unowned", u.OwnedLOC, u.Share, u.Score, color)
+	}
+
+	var allLOC int
+	var allShare float64
+	for _, o := range s.OwnershipMap {
+		allLOC += o.OwnedLOC
+		allShare += o.Share
+	}
+	addSummaryRow(tp, "+", "All ownership", allLOC, allShare, s.AuthorCRU(), color)
+
+	if s.MyLogin != "" && s.MyOwnedLOC > 0 {
+		addSummaryRow(tp, ">", "Your ownership", s.MyOwnedLOC, s.MyShare, s.MyCRU, color)
 	}
 
 	if err := tp.Render(); err != nil {
@@ -137,67 +212,61 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 	// Footnote: render only when team enumeration was incomplete AND the
 	// user didn't surface in the table (no direct @login match). The
 	// Codespaces default GITHUB_TOKEN is the common case: a PR owned by a
-	// team the user is in shows up with no `*` marker and "Your CRU"
-	// reads 0.
+	// team the user is in shows up with no `*` marker and "Your ownership"
+	// reads 0, so it's silently dropped.
 	if !s.TeamsResolved && s.MyLogin != "" && s.MyOwnedLOC == 0 {
 		fmt.Fprintln(w)
 		note := "Calculating your personal CRU requires read:org authorization to read your team memberships."
 		if color {
-			fmt.Fprintln(w, colorDim(note))
+			fmt.Fprintln(w, muted(note, color))
 		} else {
 			fmt.Fprintln(w, note)
 		}
 	}
 }
 
-// addOwnerRow appends one row to the owners table. Selects a marker
-// based on the row's type and applies colors:
+// addOwnerRow appends one named-owner data row. The marker glyph signals
+// the row's relationship to the current user:
 //
-//   - direct @login match     → `=` blue+bold, owner cell blue+bold
-//   - team membership match   → `*` blue, owner cell blue
-//   - someone else            → `•` default, owner cell default
-//   - synthetic unowned       → `~` dim, owner cell dim (numeric columns stay default)
+//   - `=` direct @login match (you specifically own these lines)
+//   - `*` team membership match (a team you're on owns these)
+//   - `•` someone else owns these
 //
-// The marker lives in its own column (1 char wide) so owner names stay
-// vertically aligned across all rows. Marker color matches owner cell
-// color so marker + name read as one visual unit; numeric columns
-// (LOC/SHARE/CRU) always render in default color, including on the
-// unowned row, so the values are easy to scan against each other.
-func addOwnerRow(tp tableprinter.TablePrinter, o score.Ownership, isDirectYou, isTeamYou, isUnowned, color bool) {
-	display := displayOwner(o.Owner)
-
-	// Pick marker + colorizer. cellColor is applied to the OWNER cell;
-	// markerColor matches so they read as a single unit.
-	identity := func(s string) string { return s }
+// Rows render plain (no color): the glyph alone carries the "is this me?"
+// signal, and uncolored numbers stay easy to scan against each other and
+// against the summary rows below. The marker lives in its own 1-char
+// column so owner names stay vertically aligned. SHARE is formatted as a
+// percentage; CRU is the owner's review-burden score.
+func addOwnerRow(tp tableprinter.TablePrinter, o score.Ownership, isDirectYou, isTeamYou bool) {
 	marker := "•"
-	markerColor := identity
-	cellColor := identity
-
 	switch {
-	case isUnowned:
-		marker = "~"
-		if color {
-			markerColor = colorDim
-			cellColor = colorDim
-		}
 	case isDirectYou:
 		marker = "="
-		if color {
-			markerColor = colorBoldBlue
-			cellColor = colorBoldBlue
-		}
 	case isTeamYou:
 		marker = "*"
-		if color {
-			markerColor = colorBlue
-			cellColor = colorBlue
-		}
 	}
-
-	tp.AddField(marker, tableprinter.WithColor(markerColor))
-	tp.AddField(display, tableprinter.WithColor(cellColor))
+	plain := func(s string) string { return s }
+	tp.AddField(marker, tableprinter.WithColor(plain))
+	tp.AddField(displayOwner(o.Owner), tableprinter.WithColor(plain))
 	tp.AddField(fmt.Sprintf("%d", o.OwnedLOC), tableprinter.WithPadding(padLeft))
-	tp.AddField(fmt.Sprintf("%.3f", o.Share), tableprinter.WithPadding(padLeft))
+	tp.AddField(fmt.Sprintf("%.1f%%", o.Share*100), tableprinter.WithPadding(padLeft))
 	tp.AddField(fmt.Sprintf("%.3f", o.Score), tableprinter.WithPadding(padLeft))
+	tp.EndRow()
+}
+
+// addSummaryRow appends one of the trailing computed-total rows (~ Unowned,
+// + All ownership, > Your ownership). The marker and label render in
+// gray+bold so the row reads as a summary, framing the plain data rows
+// above; the numeric columns render plain so they line up with the data.
+func addSummaryRow(tp tableprinter.TablePrinter, marker, name string, loc int, share, cru float64, color bool) {
+	cellColor := func(s string) string { return s }
+	if color {
+		cellColor = colorMutedBold
+	}
+	tp.AddField(marker, tableprinter.WithColor(cellColor))
+	tp.AddField(name, tableprinter.WithColor(cellColor))
+	tp.AddField(fmt.Sprintf("%d", loc), tableprinter.WithPadding(padLeft))
+	tp.AddField(fmt.Sprintf("%.1f%%", share*100), tableprinter.WithPadding(padLeft))
+	tp.AddField(fmt.Sprintf("%.3f", cru), tableprinter.WithPadding(padLeft))
 	tp.EndRow()
 }

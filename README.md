@@ -52,52 +52,58 @@ For the math, see [`laserlemon/cru`](https://github.com/laserlemon/cru).
 ```sh
 $ gh cru --repo acme/web 1234
 
-acme/web#1234
+Add rate limiting to the webhook dispatcher acme/web#1234
 
-LOC              240
-Size label       XL
-Size factor      3.065
-Risk label       low
-Risk multiplier  1.000
-Normal CRU       3.065
-Total CRU        3.321
-Your CRU         1.533
+Size  XL   3.065  240 LOC
+Risk  low  1.000
+Base       3.065  CRU
 
-   CODE OWNER               LOC  SHARE    CRU
-=  laserlemon                40  0.167  0.511
-*  acme/big-orca             80  0.333  1.022
-•  acme/payments-reviewers  100  0.417  1.277
-~  unowned                   40  0.167  0.511
+   CODE OWNER               LOC   SHARE    CRU
+=  laserlemon                40   16.7%  0.511
+*  acme/big-orca             80   33.3%  1.022
+•  acme/payments-reviewers  100   41.7%  1.277
+~  Unowned                   40   16.7%  0.511
++  All ownership            260  108.3%  3.321
+>  Your ownership           120   50.0%  1.533
 ```
 
-A 1-character marker in the gutter classifies each row:
+The heading mirrors `gh pr view`: the PR title in bold, then a gray
+`owner/repo#N` reference.
+
+The **formula block** is the score itself, one factor per row:
+
+| Row | Question it answers |
+|---|---|
+| `Size` | How big is this PR? (the bucket, its factor, and the raw LOC) |
+| `Risk` | How risky? (the tier and its multiplier) |
+| `Base` | The PR's intrinsic review weight: `Size × Risk`, in CRU |
+
+The **ownership table** then splits that weight across the people on the
+hook to review it. A 1-character marker classifies each row:
 
 | Marker | Meaning |
 |---|---|
-| `=` | Direct `@login` match (you specifically own these lines, bold blue) |
-| `*` | Team membership match (a team you're on owns these, blue) |
+| `=` | Direct `@login` match (you specifically own these lines) |
+| `*` | Team membership match (a team you're on owns these) |
 | `•` | Someone else owns these |
-| `~` | Synthetic `unowned` row: lines no CODEOWNERS rule matched |
+| `~` | `Unowned`: lines no CODEOWNERS rule matched |
+| `+` | `All ownership`: every row summed, the team's total review burden |
+| `>` | `Your ownership`: what this PR costs you to review |
 
-`Normal CRU` is the PR's intrinsic weight (size × risk). `Total CRU` sums
-all rows in the table including `unowned`; it exceeds `Normal CRU` here
-because the `big-orca` team and the `payments-reviewers` team share some
-of the same files, so per-owner LOC sums to more than the PR's total LOC.
-With no overlap, `Total CRU` equals `Normal CRU`.
+`SHARE` is each owner's slice of the PR (their LOC over the PR's total);
+`CRU` is that slice's review weight (`Base × share`).
 
-`Your CRU` is what THIS PR costs you to review: every file owned by your
-`@login` OR any team you belong to, counted once even when both match.
-For the reviewer above (`laserlemon`, on `acme/big-orca`), that's 40
-direct + 80 team = 120 LOC, share 0.500.
+The three gray summary rows (`~`, `+`, `>`) frame the raw owner data as
+computed totals. `All ownership` sums every row including `Unowned`; here
+it exceeds 100% because the `big-orca` and `payments-reviewers` teams share
+some of the same files, so per-owner LOC sums to more than the PR's total.
+With no overlap, `All ownership` lands at exactly the PR's LOC and its CRU
+equals `Base`.
 
-## Four numbers, four questions
-
-| Number | Question it answers |
-|---|---|
-| `size factor` | How big is this PR? (just LOC, in CRU-space) |
-| `normal CRU` | How much review weight does this PR carry intrinsically? |
-| `your CRU` | What does this PR actually cost me to review, given my team membership? |
-| `total CRU` | How much team review burden did this PR create? |
+`Your ownership` is what THIS PR costs you to review: every file owned by
+your `@login` OR any team you belong to, counted once even when both match.
+For the reviewer above (`laserlemon`, on `acme/big-orca`), that's 40 direct
++ 80 team = 120 LOC, share 50.0%. It only renders when you own something.
 
 ## Two commands, mirroring `gh pr`
 
