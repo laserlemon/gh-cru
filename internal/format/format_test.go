@@ -207,7 +207,7 @@ func TestJSONShapeUnownedZeroedWhenAbsent(t *testing.T) {
 		t.Fatalf("JSON render: %v", err)
 	}
 	body := buf.String()
-	if !strings.Contains(body, `"unowned":{"lines":0,"share":0,"cru":0}`) {
+	if !strings.Contains(body, `"unowned":{"lines":0,"share":0.000000,"cru":0.000000}`) {
 		t.Errorf("ownership.unowned should be present and zeroed; got:\n%s", body)
 	}
 }
