@@ -6,6 +6,36 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    name: lint (gofmt + deadcode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      # gofmt -s: enforce the standard formatting + simplifications. Fails
+      # with the list of offending files so the fix is obvious (gofmt -s -w .).
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -s -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files need 'gofmt -s -w':"
+            echo "$unformatted"
+            exit 1
+          fi
+      # deadcode: gh-cru is a binary (every package is internal/, no exported
+      # API surface), so anything unreachable from main() is genuinely dead.
+      - name: deadcode
+        run: |
+          go install golang.org/x/tools/cmd/deadcode@latest
+          dead=$("$(go env GOPATH)/bin/deadcode" ./...)
+          if [ -n "$dead" ]; then
+            echo "::error::unreachable functions found (remove them):"
+            echo "$dead"
+            exit 1
+          fi
+
   test:
     name: test (go ${{ matrix.go }})
     runs-on: ubuntu-latest
