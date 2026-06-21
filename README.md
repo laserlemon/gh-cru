@@ -164,11 +164,67 @@ Output mode auto-detects the terminal, matching `gh`'s own convention:
 
 - **TTY**: human-readable with colored markers and column alignment
 - **piped**: tab-separated rows, no color (gh script-mode convention)
-- **`--json`**: compact JSON; one object per PR (NDJSON from `gh cru list`).
-  Each owner row carries `name` (bare login or `org/team`, `null` for the
-  synthetic unowned row), `type` (`"user"` / `"team"` / `"unowned"`), and
-  `is_you` (true when the owner matches your `@login` directly or via team
-  membership). Pipe through `jq .` for pretty output
+- **`--json`**: compact JSON, one object per PR (NDJSON from `gh cru list`)
+
+### JSON
+
+`--json` emits the same data the human view draws, nothing more. It's the
+PR heading, the `Size`/`Risk`/`Base` formula block, and an `ownership`
+object holding the owner table. Here's the PR from the [Example](#example)
+above, piped through `jq`:
+
+```sh
+$ gh cru --repo acme/web 1234 --json | jq
+{
+  "repo": "acme/web",
+  "number": 1234,
+  "title": "Add rate limiting to the webhook dispatcher",
+  "lines": 240,
+  "size_label": "XL",
+  "size_factor": 3.065154,
+  "risk_label": "low",
+  "risk_multiplier": 1.000000,
+  "base_cru": 3.065154,
+  "ownership": {
+    "owners": [
+      { "name": "laserlemon",              "type": "user", "lines": 40,  "share": 0.166667, "cru": 0.510859, "is_you": true },
+      { "name": "acme/big-orca",           "type": "team", "lines": 80,  "share": 0.333333, "cru": 1.021718, "is_you": true },
+      { "name": "acme/payments-reviewers", "type": "team", "lines": 100, "share": 0.416667, "cru": 1.277147, "is_you": false }
+    ],
+    "unowned": { "lines": 40,  "share": 0.166667, "cru": 0.510859 },
+    "all":     { "lines": 260, "share": 1.083333, "cru": 3.320583 },
+    "you":     { "lines": 120, "share": 0.500000, "cru": 1.532577 }
+  }
+}
+```
+
+Top-level fields are the heading and formula block. `base_cru` is
+`size_factor × risk_multiplier`, matching the `Base` row.
+
+| Field | Meaning |
+|---|---|
+| `lines` | The PR's changed lines (additions + deletions) |
+| `size_label` / `size_factor` | The `Size` row: bucket and its factor |
+| `risk_label` / `risk_multiplier` | The `Risk` row: tier and its multiplier |
+| `base_cru` | `size_factor × risk_multiplier`, the `Base` row |
+
+`ownership` mirrors the owner table. `owners[]` holds the named rows; the
+three summary rows live alongside it as objects:
+
+| Field | Meaning |
+|---|---|
+| `owners[]` | One object per named owner (the `=`/`*`/`•` rows) |
+| `owners[].name` | Bare `login` or `org/team` (the `@` is stripped) |
+| `owners[].type` | `"user"` or `"team"` |
+| `owners[].is_you` | `true` when the owner is your `@login` directly or a team you're on |
+| `unowned` | The `~` row: lines no CODEOWNERS rule matched (always present, zeroed when none) |
+| `all` | The `+` row: every owner summed, the team's total review burden (always present) |
+| `you` | The `>` row: your stake, counted once across direct and team matches. Present only when your identity is known; omitted entirely otherwise |
+
+Every owner and summary object carries the same `{lines, share, cru}`
+shape, mirroring the `LINES`/`SHARE`/`CRU` columns. All floats are pinned
+to six decimals so downstream `==` comparisons stay stable. Pipe through
+`jq .` for pretty output.
 
 ## Flags
 
