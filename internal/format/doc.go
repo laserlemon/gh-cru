@@ -5,8 +5,10 @@
 //     owner/repo#N ref), a Size/Risk/Base formula block, and a gh-style
 //     tableprinter for the owner table with semantic size/risk coloring.
 //     Honors NO_COLOR and CLICOLOR* env vars via cli/go-gh's term package.
-//   - JSON:   structured, pipe-friendly for jq. Compact NDJSON, one object
-//     per PR; every float pinned to six decimals.
+//   - JSON:   structured, pipe-friendly for jq. Mirrors gh's own --json
+//     shape: a bare object for one PR (the view path), a JSON array for a
+//     batch (the list path), pretty-printed and colorized on a TTY and
+//     compact when piped; every float pinned to six decimals.
 //
 // When stdout isn't a TTY, the tableprinter automatically degrades to
 // tab-separated output, so `gh cru 123 | awk` still works, and the
@@ -16,5 +18,5 @@
 //
 //   - colors.go  palette + small color helpers
 //   - human.go   Human renderer (heading + formula block + owner table)
-//   - json.go    JSON renderer (compact NDJSON)
+//   - json.go    JSON renderer (object for view, array for list)
 package format

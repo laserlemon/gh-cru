@@ -164,7 +164,7 @@ Output mode auto-detects the terminal, matching `gh`'s own convention:
 
 - **TTY**: human-readable with colored markers and column alignment
 - **piped**: tab-separated rows, no color (gh script-mode convention)
-- **`--json`**: compact JSON, one object per PR (NDJSON from `gh cru list`)
+- **`--json`**: structured JSON, matching `gh`'s object-vs-array shape: a bare object for one PR (`gh cru 123`), a JSON array for a batch (`gh cru list`). Pretty-printed and colorized on a TTY, compact when piped.
 
 ### JSON
 
@@ -176,20 +176,20 @@ above, piped through `jq`:
 ```sh
 $ gh cru --repo acme/web 1234 --json | jq
 {
-  "repo": "acme/web",
+  "repository": { "name": "web", "nameWithOwner": "acme/web" },
   "number": 1234,
   "title": "Add rate limiting to the webhook dispatcher",
   "lines": 240,
-  "size_label": "XL",
-  "size_factor": 3.065154,
-  "risk_label": "low",
-  "risk_multiplier": 1.000000,
-  "base_cru": 3.065154,
+  "sizeLabel": "XL",
+  "sizeFactor": 3.065154,
+  "riskLabel": "low",
+  "riskMultiplier": 1.000000,
+  "baseCru": 3.065154,
   "ownership": {
     "owners": [
-      { "name": "laserlemon",              "type": "user", "lines": 40,  "share": 0.166667, "cru": 0.510859, "is_you": true },
-      { "name": "acme/big-orca",           "type": "team", "lines": 80,  "share": 0.333333, "cru": 1.021718, "is_you": true },
-      { "name": "acme/payments-reviewers", "type": "team", "lines": 100, "share": 0.416667, "cru": 1.277147, "is_you": false }
+      { "name": "laserlemon",              "type": "user", "lines": 40,  "share": 0.166667, "cru": 0.510859, "isYou": true },
+      { "name": "acme/big-orca",           "type": "team", "lines": 80,  "share": 0.333333, "cru": 1.021718, "isYou": true },
+      { "name": "acme/payments-reviewers", "type": "team", "lines": 100, "share": 0.416667, "cru": 1.277147, "isYou": false }
     ],
     "unowned": { "lines": 40,  "share": 0.166667, "cru": 0.510859 },
     "all":     { "lines": 260, "share": 1.083333, "cru": 3.320583 },
@@ -198,15 +198,17 @@ $ gh cru --repo acme/web 1234 --json | jq
 }
 ```
 
-Top-level fields are the heading and formula block. `base_cru` is
-`size_factor × risk_multiplier`, matching the `Base` row.
+Top-level fields are the heading and formula block. `repository` is gh's
+own nested object (`{name, nameWithOwner}`), matching `gh search prs`
+rather than a flattened string. `baseCru` is `sizeFactor × riskMultiplier`,
+matching the `Base` row.
 
 | Field | Meaning |
 |---|---|
 | `lines` | The PR's changed lines (additions + deletions) |
-| `size_label` / `size_factor` | The `Size` row: bucket and its factor |
-| `risk_label` / `risk_multiplier` | The `Risk` row: tier and its multiplier |
-| `base_cru` | `size_factor × risk_multiplier`, the `Base` row |
+| `sizeLabel` / `sizeFactor` | The `Size` row: bucket and its factor |
+| `riskLabel` / `riskMultiplier` | The `Risk` row: tier and its multiplier |
+| `baseCru` | `sizeFactor × riskMultiplier`, the `Base` row |
 
 `ownership` mirrors the owner table. `owners[]` holds the named rows; the
 three summary rows live alongside it as objects:
@@ -216,7 +218,7 @@ three summary rows live alongside it as objects:
 | `owners[]` | One object per named owner (the `=`/`*`/`•` rows) |
 | `owners[].name` | Bare `login` or `org/team` (the `@` is stripped) |
 | `owners[].type` | `"user"` or `"team"` |
-| `owners[].is_you` | `true` when the owner is your `@login` directly or a team you're on |
+| `owners[].isYou` | `true` when the owner is your `@login` directly or a team you're on |
 | `unowned` | The `~` row: lines no CODEOWNERS rule matched (always present, zeroed when none) |
 | `all` | The `+` row: every owner summed, the team's total review burden (always present) |
 | `you` | The `>` row: your stake, counted once across direct and team matches. Present only when your identity is known; omitted entirely otherwise |

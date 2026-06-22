@@ -71,6 +71,10 @@ Run "gh cru view --help" for the PR argument forms gh cru view accepts.`,
 		RunE:              runView,
 		DisableAutoGenTag: true,
 		Args:              cobra.ArbitraryArgs,
+		// runView enforces the "at most one PR" rule itself (mirroring gh
+		// pr view) and main() prints the single error line; silence
+		// cobra's own duplicate "Error:" print.
+		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringVarP(&repoFlag, "repo", "R", "",
 		"Default repo for the PR (owner/name)")
@@ -130,6 +134,7 @@ Examples:
   gh cru --repo owner/name 1234   measure a PR in another repo
   gh cru --json 1234              emit the measurement as JSON`,
 		SilenceUsage:       true,
+		SilenceErrors:      true,
 		DisableFlagParsing: true, // forward unknown flags to gh pr view; parse ours by hand
 		RunE:               runView,
 	}
@@ -150,16 +155,17 @@ requires to measure without extra API calls.
 The CRU rendering flags (--json on gh-cru itself, --skip-ownership, etc.)
 must appear BEFORE the "list" word so cobra picks them up:
 
-  gh cru --json list --state open                 NDJSON output
+  gh cru --json list --state open                 JSON array output
   gh cru list --state merged --limit 50           default human output
   gh cru list --author @me --state open
   gh cru list --repo owner/name --label bug
   gh cru list --search "is:open updated:>2026-01-01"
 
-Empty result exits 0 with no output. A failing PR (deleted file, auth
-error) aborts the whole batch; use --limit and re-run with the failing
-range narrowed to bisect.`,
+Empty result exits 0 (--json emits "[]", human output stays silent). A
+failing PR (deleted file, auth error) aborts the whole batch; use --limit
+and re-run with the failing range narrowed to bisect.`,
 		SilenceUsage:       true,
+		SilenceErrors:      true,
 		DisableFlagParsing: true, // everything after "list" passes to gh pr list
 		RunE:               runList,
 	}
@@ -198,6 +204,15 @@ func runView(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Mirror `gh pr view`, which takes at most one PR. Count the
+	// positionals left after flag stripping and reject >1 ourselves with
+	// gh's own wording, rather than forwarding them and surfacing gh's
+	// "exit status 1" wrapper. The multi-PR path is `gh cru list`
+	// (scoreJSON's loop over gh pr list's output), not CLI positionals.
+	if n := countPositionals(forwarded); n > 1 {
+		return fmt.Errorf("accepts at most 1 arg(s), received %d", n)
+	}
+
 	// On the bare command ("gh cru 1234 --repo o/r"), root parses --repo as
 	// its own registered flag, so it's already stripped from args and lives
 	// in repoFlag. The view subcommand (DisableFlagParsing) leaves --repo in
@@ -217,7 +232,35 @@ func runView(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return scoreJSON(out)
+	// gh pr view resolves a single PR → bare JSON object, mirroring
+	// `gh pr view --json` (asArray=false).
+	return scoreJSON(out, false)
+}
+
+// countPositionals counts the bare positional arguments (PR refs) in a
+// flag-stripped arg slice, skipping flags and the value token that
+// follows a value-taking flag. After stripViewFlags, the only
+// value-taking flag that can survive is --repo/-R (in its space-separated
+// spelling); its value must not be miscounted as a PR ref. Used to mirror
+// `gh pr view`'s "at most one PR" rule.
+func countPositionals(args []string) int {
+	n := 0
+	skip := false
+	for _, a := range args {
+		if skip {
+			skip = false
+			continue
+		}
+		if a == "--repo" || a == "-R" {
+			skip = true // its value is next; not a positional
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue // any other flag (incl. --repo=value / -R=value)
+		}
+		n++
+	}
+	return n
 }
 
 // hasRepoFlag reports whether a --repo/-R flag (in any of its spellings) is
@@ -234,9 +277,20 @@ func hasRepoFlag(args []string) bool {
 
 // runGH runs `gh <args>` and returns stdout, surfacing gh's own stderr
 // directly so auth/resolution errors reach the user unmodified.
+//
+// The child gh's stdout is captured as DATA (JSON we parse), never shown,
+// so we force it plain regardless of the ambient terminal env. Without
+// this, a user (or script) with GH_FORCE_TTY and/or CLICOLOR_FORCE
+// exported makes the inner `gh pr view --json` emit colorized,
+// pretty-printed JSON with ANSI escapes, which our JSON parser can't read.
+// Emptying BOTH forcing vars restores gh's normal "stdout is a pipe →
+// plain compact JSON" behavior (NO_COLOR alone does NOT: CLICOLOR_FORCE
+// still forces pretty+color over it). gh-cru's OWN output coloring is
+// decided separately, from the real stdout term, in the formatters.
 func runGH(args []string) ([]byte, error) {
 	gh := exec.Command("gh", args...)
 	gh.Stderr = os.Stderr
+	gh.Env = append(os.Environ(), "GH_FORCE_TTY=", "CLICOLOR_FORCE=", "NO_COLOR=1")
 	out, err := gh.Output()
 	if err != nil {
 		return nil, fmt.Errorf("gh %s: %w", strings.Join(args[:2], " "), err)
@@ -288,12 +342,30 @@ func stripViewFlags(args []string) ([]string, error) {
 }
 
 // scoreJSON parses gh JSON output (a single object from gh pr view, or an
-// array / NDJSON from gh pr list) into Inputs and scores each one. Shared by
-// runView and runList so the scoring engine lives in exactly one place.
-func scoreJSON(jsonOut []byte) error {
+// array / NDJSON from gh pr list) into Inputs, scores each one, and renders
+// the batch. Shared by runView and runList so the scoring engine lives in
+// exactly one place.
+//
+// asArray picks the --json output shape, mirroring gh's own object-vs-array
+// convention (decision: gh pr view → object, gh pr list → array):
+//   - false (view): a bare JSON object per PR. The view path resolves
+//     exactly one PR, so this is a single `{...}`, matching `gh pr view --json`.
+//   - true (list): one JSON array over the whole batch, `[{...},{...}]`,
+//     matching `gh pr list --json` even for a single (or empty) result.
+//
+// Human output streams per-PR in both modes (better for long lists than
+// buffering). Per-PR fetch/score failures are reported to stderr and
+// skipped; the batch still finishes and exits non-zero.
+func scoreJSON(jsonOut []byte, asArray bool) error {
 	trimmed := strings.TrimSpace(string(jsonOut))
 	if trimmed == "" || trimmed == "[]" {
-		// Empty result (e.g. gh pr list matched nothing) is success.
+		// Empty result (e.g. gh pr list matched nothing). In list JSON
+		// mode emit `[]` so a downstream consumer always gets valid JSON
+		// (matching `gh pr list --json` on no matches); object and human
+		// modes stay silent.
+		if jsonFlag && asArray {
+			return format.JSONArray(os.Stdout, nil, term.FromEnv())
+		}
 		return nil
 	}
 
@@ -303,6 +375,9 @@ func scoreJSON(jsonOut []byte) error {
 		return err
 	}
 	if len(inputs) == 0 {
+		if jsonFlag && asArray {
+			return format.JSONArray(os.Stdout, nil, term.FromEnv())
+		}
 		return nil
 	}
 
@@ -313,15 +388,38 @@ func scoreJSON(jsonOut []byte) error {
 	myLogin, myIdentities, teamsOK := resolveMe(client)
 
 	exitErr := 0
-	for i, in := range inputs {
-		if i > 0 {
-			// Blank line between PRs so headings have breathing room.
-			fmt.Println()
-		}
-		if err := scoreOne(client, in, myLogin, myIdentities, teamsOK); err != nil {
+	printedHuman := false   // for the blank-line separator in human mode
+	var items []format.Item // collected for array mode; emitted once at the end
+	for _, in := range inputs {
+		repoStr, s, err := computeOne(client, in, myLogin, myIdentities, teamsOK)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s/%s#%d: %v\n", in.Ref.Owner, in.Ref.Repo, in.Ref.Number, err)
 			exitErr = 1
 			continue
+		}
+		switch {
+		case jsonFlag && asArray:
+			// Collect; the whole batch emits as one array below.
+			items = append(items, format.Item{Repo: repoStr, Score: s})
+		case jsonFlag:
+			// Bare object per PR (NDJSON when piped over multiple).
+			if err := format.JSON(os.Stdout, repoStr, s, term.FromEnv()); err != nil {
+				return err
+			}
+		default:
+			// Human: blank line between PRs so headings have breathing
+			// room. Gate on prior successful output so a leading skip
+			// doesn't leave an orphan blank line.
+			if printedHuman {
+				fmt.Println()
+			}
+			format.Human(os.Stdout, repoStr, s, term.FromEnv())
+			printedHuman = true
+		}
+	}
+	if jsonFlag && asArray {
+		if err := format.JSONArray(os.Stdout, items, term.FromEnv()); err != nil {
+			return err
 		}
 	}
 	if exitErr != 0 {
@@ -353,8 +451,10 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	// gh pr list emits a JSON array; scoreJSON handles array, NDJSON, and
-	// the empty-result case uniformly with the view path.
-	return scoreJSON(out)
+	// the empty-result case uniformly with the view path. The list path
+	// renders our --json as a JSON array too (asArray=true), mirroring
+	// `gh pr list --json`.
+	return scoreJSON(out, true)
 }
 
 // extractRootFlags pulls gh-cru's persistent root flags out of an
@@ -517,9 +617,12 @@ func stripJSONFlags(args []string) []string {
 	return out
 }
 
-// scoreOne fetches whatever the Input doesn't already carry and writes
-// the formatted measurement.
-func scoreOne(client *ghc.Client, in input.Input, myLogin string, myIdentities []string, teamsOK bool) error {
+// computeOne fetches whatever the Input doesn't already carry, scores the
+// PR, and returns its "owner/name" repo string plus the score. Rendering is
+// the caller's job (scoreJSON), so the same compute path feeds human output,
+// per-PR JSON objects, and the batched JSON array without duplicating the
+// fetch/score dance.
+func computeOne(client *ghc.Client, in input.Input, myLogin string, myIdentities []string, teamsOK bool) (string, score.PRScore, error) {
 	var pr ghc.PR
 	if in.PR != nil {
 		pr = *in.PR
@@ -530,7 +633,7 @@ func scoreOne(client *ghc.Client, in input.Input, myLogin string, myIdentities [
 	} else {
 		fetched, err := client.FetchPR(in.Ref)
 		if err != nil {
-			return err
+			return "", score.PRScore{}, err
 		}
 		pr = fetched
 	}
@@ -543,14 +646,14 @@ func scoreOne(client *ghc.Client, in input.Input, myLogin string, myIdentities [
 		} else {
 			fetched, err := client.FetchPRFiles(in.Ref)
 			if err != nil {
-				return err
+				return "", score.PRScore{}, err
 			}
 			files = fetched
 		}
 		var err error
 		owners, _, err = client.FetchCodeowners(in.Ref.Owner, in.Ref.Repo, pr.CodeownersRef())
 		if err != nil {
-			return err
+			return "", score.PRScore{}, err
 		}
 	}
 
@@ -569,11 +672,7 @@ func scoreOne(client *ghc.Client, in input.Input, myLogin string, myIdentities [
 		}
 	}
 	repoStr := fmt.Sprintf("%s/%s", in.Ref.Owner, in.Ref.Repo)
-	if jsonFlag {
-		return format.JSON(os.Stdout, repoStr, s)
-	}
-	format.Human(os.Stdout, repoStr, s, term.FromEnv())
-	return nil
+	return repoStr, s, nil
 }
 
 // resolveMe centralizes the identity-resolution dance so view and list

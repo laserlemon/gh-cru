@@ -97,15 +97,15 @@
   The CRU rendering flags (--json on gh-cru itself, --skip-ownership, etc.)
   must appear BEFORE the "list" word so cobra picks them up:
   
-    gh cru --json list --state open                 NDJSON output
+    gh cru --json list --state open                 JSON array output
     gh cru list --state merged --limit 50           default human output
     gh cru list --author @me --state open
     gh cru list --repo owner/name --label bug
     gh cru list --search "is:open updated:>2026-01-01"
   
-  Empty result exits 0 with no output. A failing PR (deleted file, auth
-  error) aborts the whole batch; use --limit and re-run with the failing
-  range narrowed to bisect.
+  Empty result exits 0 (--json emits "[]", human output stays silent). A
+  failing PR (deleted file, auth error) aborts the whole batch; use --limit
+  and re-run with the failing range narrowed to bisect.
   
   Usage:
     gh-cru list [gh pr list flags] [flags]
@@ -280,82 +280,189 @@
 
 [46;30;1m 6. JSON output (--json) [0m
 
-[2m  The structured surface, one compact NDJSON object per PR. This is[0m
-[2m  the canonical form; the Human view is a render OF these numbers.[0m
-[2m  Shown pretty-printed here for reading; real output is one line.[0m
+[2m  The structured surface. One PR is a bare JSON object (shown here);[0m
+[2m  a batch (gh cru list) is a JSON array. This is the canonical form;[0m
+[2m  the Human view is a render OF these numbers. On a TTY it's pretty-[0m
+[2m  printed and colorized, as below; piped, it's compact.[0m
 
 [35;1m▸ gh cru --json 78   (the "everything at once" PR)[0m
 
-  [2m{[0m
-  [2m  "repo": "acme/payments",[0m
-  [2m  "number": 78,[0m
-  [2m  "title": "Migrate payments ledger to double-entry schema",[0m
-  [2m  "lines": 240,[0m
-  [2m  "size_label": "XL",[0m
-  [2m  "size_factor": 3.065154,[0m
-  [2m  "risk_label": "high",[0m
-  [2m  "risk_multiplier": 4.000000,[0m
-  [2m  "base_cru": 12.260615,[0m
-  [2m  "ownership": {[0m
-  [2m    "owners": [[0m
-  [2m      {[0m
-  [2m        "name": "laserlemon",[0m
-  [2m        "type": "user",[0m
-  [2m        "lines": 40,[0m
-  [2m        "share": 0.166667,[0m
-  [2m        "cru": 2.043436,[0m
-  [2m        "is_you": true[0m
-  [2m      },[0m
-  [2m      {[0m
-  [2m        "name": "acme/big-orca",[0m
-  [2m        "type": "team",[0m
-  [2m        "lines": 60,[0m
-  [2m        "share": 0.250000,[0m
-  [2m        "cru": 3.065154,[0m
-  [2m        "is_you": true[0m
-  [2m      },[0m
-  [2m      {[0m
-  [2m        "name": "acme/payments-team",[0m
-  [2m        "type": "team",[0m
-  [2m        "lines": 100,[0m
-  [2m        "share": 0.416667,[0m
-  [2m        "cru": 5.108590,[0m
-  [2m        "is_you": false[0m
-  [2m      }[0m
-  [2m    ],[0m
-  [2m    "unowned": {[0m
-  [2m      "lines": 40,[0m
-  [2m      "share": 0.166667,[0m
-  [2m      "cru": 2.043436[0m
-  [2m    },[0m
-  [2m    "all": {[0m
-  [2m      "lines": 240,[0m
-  [2m      "share": 1.000000,[0m
-  [2m      "cru": 12.260615[0m
-  [2m    },[0m
-  [2m    "you": {[0m
-  [2m      "lines": 100,[0m
-  [2m      "share": 0.416667,[0m
-  [2m      "cru": 5.108590[0m
-  [2m    }[0m
-  [2m  }[0m
-  [2m}[0m
+  [1;38m{[m
+    [1;34m"repository"[m[1;38m:[m [1;38m{[m
+      [1;34m"name"[m[1;38m:[m [32m"payments"[m[1;38m,[m
+      [1;34m"nameWithOwner"[m[1;38m:[m [32m"acme/payments"[m
+    [1;38m}[m[1;38m,[m
+    [1;34m"number"[m[1;38m:[m 78[1;38m,[m
+    [1;34m"title"[m[1;38m:[m [32m"Migrate payments ledger to double-entry schema"[m[1;38m,[m
+    [1;34m"lines"[m[1;38m:[m 240[1;38m,[m
+    [1;34m"sizeLabel"[m[1;38m:[m [32m"XL"[m[1;38m,[m
+    [1;34m"sizeFactor"[m[1;38m:[m 3.065154[1;38m,[m
+    [1;34m"riskLabel"[m[1;38m:[m [32m"high"[m[1;38m,[m
+    [1;34m"riskMultiplier"[m[1;38m:[m 4.000000[1;38m,[m
+    [1;34m"baseCru"[m[1;38m:[m 12.260615[1;38m,[m
+    [1;34m"ownership"[m[1;38m:[m [1;38m{[m
+      [1;34m"owners"[m[1;38m:[m [1;38m[[m
+        [1;38m{[m
+          [1;34m"name"[m[1;38m:[m [32m"laserlemon"[m[1;38m,[m
+          [1;34m"type"[m[1;38m:[m [32m"user"[m[1;38m,[m
+          [1;34m"lines"[m[1;38m:[m 40[1;38m,[m
+          [1;34m"share"[m[1;38m:[m 0.166667[1;38m,[m
+          [1;34m"cru"[m[1;38m:[m 2.043436[1;38m,[m
+          [1;34m"isYou"[m[1;38m:[m [33mtrue[m
+        [1;38m}[m[1;38m,[m
+        [1;38m{[m
+          [1;34m"name"[m[1;38m:[m [32m"acme/big-orca"[m[1;38m,[m
+          [1;34m"type"[m[1;38m:[m [32m"team"[m[1;38m,[m
+          [1;34m"lines"[m[1;38m:[m 60[1;38m,[m
+          [1;34m"share"[m[1;38m:[m 0.250000[1;38m,[m
+          [1;34m"cru"[m[1;38m:[m 3.065154[1;38m,[m
+          [1;34m"isYou"[m[1;38m:[m [33mtrue[m
+        [1;38m}[m[1;38m,[m
+        [1;38m{[m
+          [1;34m"name"[m[1;38m:[m [32m"acme/payments-team"[m[1;38m,[m
+          [1;34m"type"[m[1;38m:[m [32m"team"[m[1;38m,[m
+          [1;34m"lines"[m[1;38m:[m 100[1;38m,[m
+          [1;34m"share"[m[1;38m:[m 0.416667[1;38m,[m
+          [1;34m"cru"[m[1;38m:[m 5.108590[1;38m,[m
+          [1;34m"isYou"[m[1;38m:[m [33mfalse[m
+        [1;38m}[m
+      [1;38m][m[1;38m,[m
+      [1;34m"unowned"[m[1;38m:[m [1;38m{[m
+        [1;34m"lines"[m[1;38m:[m 40[1;38m,[m
+        [1;34m"share"[m[1;38m:[m 0.166667[1;38m,[m
+        [1;34m"cru"[m[1;38m:[m 2.043436
+      [1;38m}[m[1;38m,[m
+      [1;34m"all"[m[1;38m:[m [1;38m{[m
+        [1;34m"lines"[m[1;38m:[m 240[1;38m,[m
+        [1;34m"share"[m[1;38m:[m 1.000000[1;38m,[m
+        [1;34m"cru"[m[1;38m:[m 12.260615
+      [1;38m}[m[1;38m,[m
+      [1;34m"you"[m[1;38m:[m [1;38m{[m
+        [1;34m"lines"[m[1;38m:[m 100[1;38m,[m
+        [1;34m"share"[m[1;38m:[m 0.416667[1;38m,[m
+        [1;34m"cru"[m[1;38m:[m 5.108590
+      [1;38m}[m
+    [1;38m}[m
+  [1;38m}[m
 
 [35;1m▸ gh cru --json --skip-ownership 78[0m
 
 [2m  Under --skip-ownership the `ownership` object is omitted entirely;[0m
-[2m  the measurement degrades cleanly to base_cru.[0m
-  [2m{[0m
-  [2m  "repo": "acme/payments",[0m
-  [2m  "number": 78,[0m
-  [2m  "title": "Migrate payments ledger to double-entry schema",[0m
-  [2m  "lines": 240,[0m
-  [2m  "size_label": "XL",[0m
-  [2m  "size_factor": 3.065154,[0m
-  [2m  "risk_label": "high",[0m
-  [2m  "risk_multiplier": 4.000000,[0m
-  [2m  "base_cru": 12.260615[0m
-  [2m}[0m
+[2m  the measurement degrades cleanly to baseCru.[0m
+  [1;38m{[m
+    [1;34m"repository"[m[1;38m:[m [1;38m{[m
+      [1;34m"name"[m[1;38m:[m [32m"payments"[m[1;38m,[m
+      [1;34m"nameWithOwner"[m[1;38m:[m [32m"acme/payments"[m
+    [1;38m}[m[1;38m,[m
+    [1;34m"number"[m[1;38m:[m 78[1;38m,[m
+    [1;34m"title"[m[1;38m:[m [32m"Migrate payments ledger to double-entry schema"[m[1;38m,[m
+    [1;34m"lines"[m[1;38m:[m 240[1;38m,[m
+    [1;34m"sizeLabel"[m[1;38m:[m [32m"XL"[m[1;38m,[m
+    [1;34m"sizeFactor"[m[1;38m:[m 3.065154[1;38m,[m
+    [1;34m"riskLabel"[m[1;38m:[m [32m"high"[m[1;38m,[m
+    [1;34m"riskMultiplier"[m[1;38m:[m 4.000000[1;38m,[m
+    [1;34m"baseCru"[m[1;38m:[m 12.260615
+  [1;38m}[m
+
+[35;1m▸ gh cru --json list   (a batch is a JSON array)[0m
+
+[2m  The list path wraps the whole batch in one JSON array, mirroring[0m
+[2m  `gh pr list --json`. One PR is an object (above); many are an array.[0m
+  [1;38m[[m
+    [1;38m{[m
+      [1;34m"repository"[m[1;38m:[m [1;38m{[m
+        [1;34m"name"[m[1;38m:[m [32m"api"[m[1;38m,[m
+        [1;34m"nameWithOwner"[m[1;38m:[m [32m"acme/api"[m
+      [1;38m}[m[1;38m,[m
+      [1;34m"number"[m[1;38m:[m 1238[1;38m,[m
+      [1;34m"title"[m[1;38m:[m [32m"Add pagination to the public list endpoints"[m[1;38m,[m
+      [1;34m"lines"[m[1;38m:[m 34[1;38m,[m
+      [1;34m"sizeLabel"[m[1;38m:[m [32m"M"[m[1;38m,[m
+      [1;34m"sizeFactor"[m[1;38m:[m 0.806086[1;38m,[m
+      [1;34m"riskLabel"[m[1;38m:[m [32m"medium"[m[1;38m,[m
+      [1;34m"riskMultiplier"[m[1;38m:[m 2.000000[1;38m,[m
+      [1;34m"baseCru"[m[1;38m:[m 1.612172[1;38m,[m
+      [1;34m"ownership"[m[1;38m:[m [1;38m{[m
+        [1;34m"owners"[m[1;38m:[m [1;38m[[m
+          [1;38m{[m
+            [1;34m"name"[m[1;38m:[m [32m"acme/api-team"[m[1;38m,[m
+            [1;34m"type"[m[1;38m:[m [32m"team"[m[1;38m,[m
+            [1;34m"lines"[m[1;38m:[m 34[1;38m,[m
+            [1;34m"share"[m[1;38m:[m 1.000000[1;38m,[m
+            [1;34m"cru"[m[1;38m:[m 1.612172[1;38m,[m
+            [1;34m"isYou"[m[1;38m:[m [33mfalse[m
+          [1;38m}[m
+        [1;38m][m[1;38m,[m
+        [1;34m"unowned"[m[1;38m:[m [1;38m{[m
+          [1;34m"lines"[m[1;38m:[m 0[1;38m,[m
+          [1;34m"share"[m[1;38m:[m 0.000000[1;38m,[m
+          [1;34m"cru"[m[1;38m:[m 0.000000
+        [1;38m}[m[1;38m,[m
+        [1;34m"all"[m[1;38m:[m [1;38m{[m
+          [1;34m"lines"[m[1;38m:[m 34[1;38m,[m
+          [1;34m"share"[m[1;38m:[m 1.000000[1;38m,[m
+          [1;34m"cru"[m[1;38m:[m 1.612172
+        [1;38m}[m
+      [1;38m}[m
+    [1;38m}[m[1;38m,[m
+    [1;38m{[m
+      [1;34m"repository"[m[1;38m:[m [1;38m{[m
+        [1;34m"name"[m[1;38m:[m [32m"payments"[m[1;38m,[m
+        [1;34m"nameWithOwner"[m[1;38m:[m [32m"acme/payments"[m
+      [1;38m}[m[1;38m,[m
+      [1;34m"number"[m[1;38m:[m 78[1;38m,[m
+      [1;34m"title"[m[1;38m:[m [32m"Migrate payments ledger to double-entry schema"[m[1;38m,[m
+      [1;34m"lines"[m[1;38m:[m 240[1;38m,[m
+      [1;34m"sizeLabel"[m[1;38m:[m [32m"XL"[m[1;38m,[m
+      [1;34m"sizeFactor"[m[1;38m:[m 3.065154[1;38m,[m
+      [1;34m"riskLabel"[m[1;38m:[m [32m"high"[m[1;38m,[m
+      [1;34m"riskMultiplier"[m[1;38m:[m 4.000000[1;38m,[m
+      [1;34m"baseCru"[m[1;38m:[m 12.260615[1;38m,[m
+      [1;34m"ownership"[m[1;38m:[m [1;38m{[m
+        [1;34m"owners"[m[1;38m:[m [1;38m[[m
+          [1;38m{[m
+            [1;34m"name"[m[1;38m:[m [32m"laserlemon"[m[1;38m,[m
+            [1;34m"type"[m[1;38m:[m [32m"user"[m[1;38m,[m
+            [1;34m"lines"[m[1;38m:[m 40[1;38m,[m
+            [1;34m"share"[m[1;38m:[m 0.166667[1;38m,[m
+            [1;34m"cru"[m[1;38m:[m 2.043436[1;38m,[m
+            [1;34m"isYou"[m[1;38m:[m [33mtrue[m
+          [1;38m}[m[1;38m,[m
+          [1;38m{[m
+            [1;34m"name"[m[1;38m:[m [32m"acme/big-orca"[m[1;38m,[m
+            [1;34m"type"[m[1;38m:[m [32m"team"[m[1;38m,[m
+            [1;34m"lines"[m[1;38m:[m 60[1;38m,[m
+            [1;34m"share"[m[1;38m:[m 0.250000[1;38m,[m
+            [1;34m"cru"[m[1;38m:[m 3.065154[1;38m,[m
+            [1;34m"isYou"[m[1;38m:[m [33mtrue[m
+          [1;38m}[m[1;38m,[m
+          [1;38m{[m
+            [1;34m"name"[m[1;38m:[m [32m"acme/payments-team"[m[1;38m,[m
+            [1;34m"type"[m[1;38m:[m [32m"team"[m[1;38m,[m
+            [1;34m"lines"[m[1;38m:[m 100[1;38m,[m
+            [1;34m"share"[m[1;38m:[m 0.416667[1;38m,[m
+            [1;34m"cru"[m[1;38m:[m 5.108590[1;38m,[m
+            [1;34m"isYou"[m[1;38m:[m [33mfalse[m
+          [1;38m}[m
+        [1;38m][m[1;38m,[m
+        [1;34m"unowned"[m[1;38m:[m [1;38m{[m
+          [1;34m"lines"[m[1;38m:[m 40[1;38m,[m
+          [1;34m"share"[m[1;38m:[m 0.166667[1;38m,[m
+          [1;34m"cru"[m[1;38m:[m 2.043436
+        [1;38m}[m[1;38m,[m
+        [1;34m"all"[m[1;38m:[m [1;38m{[m
+          [1;34m"lines"[m[1;38m:[m 240[1;38m,[m
+          [1;34m"share"[m[1;38m:[m 1.000000[1;38m,[m
+          [1;34m"cru"[m[1;38m:[m 12.260615
+        [1;38m}[m[1;38m,[m
+        [1;34m"you"[m[1;38m:[m [1;38m{[m
+          [1;34m"lines"[m[1;38m:[m 100[1;38m,[m
+          [1;34m"share"[m[1;38m:[m 0.416667[1;38m,[m
+          [1;34m"cru"[m[1;38m:[m 5.108590
+        [1;38m}[m
+      [1;38m}[m
+    [1;38m}[m
+  [1;38m][m
 
 
 [46;30;1m 7. Warnings & errors [0m

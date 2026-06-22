@@ -367,3 +367,32 @@ func TestStripViewFlags(t *testing.T) {
 		})
 	}
 }
+
+// TestCountPositionals locks in the "at most one PR" arg count that mirrors
+// gh pr view. The tricky cases are --repo/-R, whose value must not be
+// miscounted as a second PR ref.
+func TestCountPositionals(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   []string
+		want int
+	}{
+		{name: "empty (current branch)", in: []string{}, want: 0},
+		{name: "single number", in: []string{"1234"}, want: 1},
+		{name: "single branch name", in: []string{"my-feature-branch"}, want: 1},
+		{name: "two numbers", in: []string{"1", "2"}, want: 2},
+		{name: "three numbers", in: []string{"1", "2", "3"}, want: 3},
+		{name: "repo space value not counted", in: []string{"--repo", "o/r", "1234"}, want: 1},
+		{name: "-R space value not counted", in: []string{"-R", "o/r", "1234"}, want: 1},
+		{name: "repo equals value not counted", in: []string{"--repo=o/r", "1234"}, want: 1},
+		{name: "-R equals value not counted", in: []string{"-R=o/r", "1234"}, want: 1},
+		{name: "repo interleaved between two refs", in: []string{"1", "-R", "o/r", "2"}, want: 2},
+		{name: "only a repo flag, no ref", in: []string{"--repo", "o/r"}, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := countPositionals(tc.in); got != tc.want {
+				t.Errorf("countPositionals(%v) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}

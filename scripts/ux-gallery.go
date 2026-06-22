@@ -106,15 +106,27 @@ func main() {
 
 	// 6. JSON SURFACE ------------------------------------------------
 	g.h1("6", "JSON output (--json)")
-	g.note("The structured surface, one compact NDJSON object per PR. This is")
-	g.note("the canonical form; the Human view is a render OF these numbers.")
-	g.note("Shown pretty-printed here for reading; real output is one line.")
+	g.note("The structured surface. One PR is a bare JSON object (shown here);")
+	g.note("a batch (gh cru list) is a JSON array. This is the canonical form;")
+	g.note("the Human view is a render OF these numbers. On a TTY it's pretty-")
+	g.note("printed and colorized, as below; piped, it's compact.")
 	g.h2("gh cru --json 78   (the \"everything at once\" PR)")
 	g.jsonBlock("acme/payments", buildScore(everythingScenario()))
 	g.h2("gh cru --json --skip-ownership 78")
 	g.note("Under --skip-ownership the `ownership` object is omitted entirely;")
-	g.note("the measurement degrades cleanly to base_cru.")
+	g.note("the measurement degrades cleanly to baseCru.")
 	g.jsonBlock("acme/payments", skipOwnershipScore())
+	g.h2("gh cru --json list   (a batch is a JSON array)")
+	g.note("The list path wraps the whole batch in one JSON array, mirroring")
+	g.note("`gh pr list --json`. One PR is an object (above); many are an array.")
+	g.jsonArrayBlock([]format.Item{
+		{Repo: "acme/api", Score: buildScore(scenario{
+			Title: "Add pagination to the public list endpoints", Repo: "acme/api",
+			Number: 1238, LOC: 34, Risk: cru.RiskMedium, HasCodeowners: true,
+			Owners: []owner{{"@acme/api-team", 34}},
+		})},
+		{Repo: "acme/payments", Score: buildScore(everythingScenario())},
+	})
 
 	// 7. WARNINGS & ERRORS -------------------------------------------
 	g.h1("7", "Warnings & errors")
@@ -199,23 +211,31 @@ func (g *gallery) errExample(cmd, msg string) {
 }
 
 func (g *gallery) jsonBlock(repo string, s score.PRScore) {
+	// Capture gh-cru's own --json output. Under the gallery's capture env
+	// (GH_FORCE_TTY=100 CLICOLOR_FORCE=1) term.FromEnv() reports a colored
+	// TTY, so format.JSON pretty-prints and colorizes natively, exactly
+	// what a user sees running `gh cru --json` in a terminal. No jq needed.
 	var buf bytes.Buffer
-	if err := format.JSON(&buf, repo, s); err != nil {
+	if err := format.JSON(&buf, repo, s, term.FromEnv()); err != nil {
 		fmt.Fprintln(g.out, g.esc("31", "  JSON render error: "+err.Error()))
 		return
 	}
-	// format.JSON emits compact NDJSON; pretty-print via `jq .` when
-	// available so the gallery is readable, else show the raw line.
-	pretty := buf.Bytes()
-	if jq, err := exec.LookPath("jq"); err == nil {
-		c := exec.Command(jq, ".")
-		c.Stdin = bytes.NewReader(buf.Bytes())
-		if outBytes, err := c.Output(); err == nil {
-			pretty = outBytes
-		}
+	for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		fmt.Fprintln(g.out, "  "+line)
 	}
-	for _, line := range strings.Split(strings.TrimRight(string(pretty), "\n"), "\n") {
-		fmt.Fprintln(g.out, "  "+g.esc("2", line))
+}
+
+// jsonArrayBlock captures the list path's array output (format.JSONArray)
+// the same way jsonBlock captures the view path's object, demonstrating
+// the object-vs-array split: one PR is an object, a batch is an array.
+func (g *gallery) jsonArrayBlock(items []format.Item) {
+	var buf bytes.Buffer
+	if err := format.JSONArray(&buf, items, term.FromEnv()); err != nil {
+		fmt.Fprintln(g.out, g.esc("31", "  JSON render error: "+err.Error()))
+		return
+	}
+	for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		fmt.Fprintln(g.out, "  "+line)
 	}
 }
 

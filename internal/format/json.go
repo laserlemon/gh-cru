@@ -1,22 +1,88 @@
 package format
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/cli/go-gh/v2/pkg/jsonpretty"
+	"github.com/cli/go-gh/v2/pkg/term"
+
 	"github.com/laserlemon/gh-cru/internal/score"
 )
 
-// JSON writes one compact JSON object per call (NDJSON when looped over
-// multiple PRs).
-//
-// The schema carries exactly what the human renderer draws, nothing more:
-// the heading (repo/number/title), the Size/Risk/Base formula block, and
-// an `ownership` object holding the owner table. PR metadata the score
+// rowJSON is the shared shape for every ownership row: the named owner
+// rows in `owners[]` and the three summary rows (unowned/all/you) are
+// all {lines, share, cru}, mirroring the LINES/SHARE/CRU table columns.
+type rowJSON struct {
+	Lines int         `json:"lines"`
+	Share json.Number `json:"share"`
+	CRU   json.Number `json:"cru"`
+}
+
+// ownerJSON is a named owner row: a rowJSON plus the identity columns
+// that drive the table marker (name + type + isYou → =/*/•).
+type ownerJSON struct {
+	Name  string      `json:"name"` // bare login or "org/team"; "@" stripped
+	Type  string      `json:"type"` // "user" | "team"
+	Lines int         `json:"lines"`
+	Share json.Number `json:"share"`
+	CRU   json.Number `json:"cru"`
+	IsYou bool        `json:"isYou"` // direct @login or team-membership match
+}
+
+type ownershipJSON struct {
+	Owners  []ownerJSON `json:"owners"`
+	Unowned rowJSON     `json:"unowned"`       // always present, zeroed if no unowned lines
+	All     rowJSON     `json:"all"`           // always present; Σ over all rows
+	You     *rowJSON    `json:"you,omitempty"` // present iff identity is known
+}
+
+// repositoryJSON mirrors gh's own nested repository object (as emitted
+// by `gh search prs --json repository`): the bare name plus the
+// owner-qualified nameWithOwner. gh never abbreviates to "repo" or
+// flattens it to a string, so neither do we. `id` is intentionally
+// omitted: a repo node ID is useless to a CRU consumer and isn't on
+// hand in the `gh pr list` path.
+type repositoryJSON struct {
+	Name          string `json:"name"`          // bare repo name, e.g. "cli"
+	NameWithOwner string `json:"nameWithOwner"` // "owner/name", e.g. "cli/cli"
+}
+
+// prJSON is the top-level per-PR measurement object. Its schema carries
+// exactly what the human renderer draws, nothing more: the heading
+// (repository/number/title), the Size/Risk/Base formula block, and an
+// `ownership` object holding the owner table. PR metadata the score
 // doesn't use (author, state, additions/deletions, file count) is
 // deliberately omitted; consumers who want it have `gh pr view --json`.
+type prJSON struct {
+	Repository     repositoryJSON `json:"repository"`
+	Number         int            `json:"number"`
+	Title          string         `json:"title"`
+	Lines          int            `json:"lines"`
+	SizeLabel      string         `json:"sizeLabel"`
+	SizeFactor     json.Number    `json:"sizeFactor"`
+	RiskLabel      string         `json:"riskLabel"`
+	RiskMultiplier json.Number    `json:"riskMultiplier"`
+	BaseCRU        json.Number    `json:"baseCru"`
+	Ownership      *ownershipJSON `json:"ownership,omitempty"` // omitted under --skip-ownership
+}
+
+// Item pairs a repo ("owner/name") with its computed score for array
+// rendering. JSONArray takes a slice of these so the list path can emit
+// one JSON array over the whole batch.
+type Item struct {
+	Repo  string
+	Score score.PRScore
+}
+
+// buildPR assembles the marshalable per-PR object from a score.
+//
+// `repository` is gh's own nested object ({name, nameWithOwner}), matching
+// `gh search prs --json repository` rather than a flattened "owner/name"
+// string.
 //
 // Every float is pinned to exactly 6 decimal places via json.Number
 // (e.g. "2.000000", "0.166667"), matching the cru CLI byte-for-byte.
@@ -31,44 +97,7 @@ import (
 //
 // Six places preserves all meaningful precision (PR factors never need
 // more than ~4 significant digits).
-func JSON(w io.Writer, repo string, s score.PRScore) error {
-	// rowJSON is the shared shape for every ownership row: the named owner
-	// rows in `owners[]` and the three summary rows (unowned/all/you) are
-	// all {lines, share, cru}, mirroring the LINES/SHARE/CRU table columns.
-	type rowJSON struct {
-		Lines int         `json:"lines"`
-		Share json.Number `json:"share"`
-		CRU   json.Number `json:"cru"`
-	}
-	// ownerJSON is a named owner row: a rowJSON plus the identity columns
-	// that drive the table marker (name + type + is_you → =/*/•).
-	type ownerJSON struct {
-		Name  string      `json:"name"` // bare login or "org/team"; "@" stripped
-		Type  string      `json:"type"` // "user" | "team"
-		Lines int         `json:"lines"`
-		Share json.Number `json:"share"`
-		CRU   json.Number `json:"cru"`
-		IsYou bool        `json:"is_you"` // direct @login or team-membership match
-	}
-	type ownershipJSON struct {
-		Owners  []ownerJSON `json:"owners"`
-		Unowned rowJSON     `json:"unowned"`       // always present, zeroed if no unowned lines
-		All     rowJSON     `json:"all"`           // always present; Σ over all rows
-		You     *rowJSON    `json:"you,omitempty"` // present iff identity is known
-	}
-	type out struct {
-		Repo           string         `json:"repo"`
-		Number         int            `json:"number"`
-		Title          string         `json:"title"`
-		Lines          int            `json:"lines"`
-		SizeLabel      string         `json:"size_label"`
-		SizeFactor     json.Number    `json:"size_factor"`
-		RiskLabel      string         `json:"risk_label"`
-		RiskMultiplier json.Number    `json:"risk_multiplier"`
-		BaseCRU        json.Number    `json:"base_cru"`
-		Ownership      *ownershipJSON `json:"ownership,omitempty"` // omitted under --skip-ownership
-	}
-
+func buildPR(repo string, s score.PRScore) prJSON {
 	mySet := makeIdentitySet(s.MyIdentities)
 	myLoginKey := ""
 	if s.MyLogin != "" {
@@ -121,8 +150,17 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 	}
 
 	all := s.Totals()
-	o := out{
-		Repo:           repo,
+	// Split the "owner/name" repo string into gh's nested repository
+	// shape. IndexByte on the first "/" so an unexpected slash in the name
+	// (there shouldn't be one) doesn't lose data; if there's no slash at
+	// all, Name falls back to the whole string and nameWithOwner carries
+	// it verbatim.
+	repoName := repo
+	if i := strings.IndexByte(repo, '/'); i >= 0 {
+		repoName = repo[i+1:]
+	}
+	o := prJSON{
+		Repository:     repositoryJSON{Name: repoName, NameWithOwner: repo},
 		Number:         s.PR.Number,
 		Title:          s.PR.Title,
 		Lines:          s.LOC,
@@ -134,7 +172,7 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 	}
 	// --skip-ownership: no CODEOWNERS was consulted, so omit the
 	// ownership object entirely rather than emit a fabricated 100%
-	// unowned block. The measurement degrades cleanly to base_cru.
+	// unowned block. The measurement degrades cleanly to baseCru.
 	if !s.OwnershipSkipped {
 		o.Ownership = &ownershipJSON{
 			Owners:  owners,
@@ -143,12 +181,44 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 			You:     you,
 		}
 	}
-	enc := json.NewEncoder(w)
-	// Compact NDJSON: one PR per line, no internal newlines. This makes
-	// multi-PR output ("gh cru a b c", "gh cru list ...") a real
-	// machine-parseable stream. Users who want pretty-printed JSON for
-	// a single PR can pipe through `jq .`.
-	return enc.Encode(o)
+	return o
+}
+
+// JSON writes one PR's measurement as a bare JSON object, mirroring
+// `gh pr view --json` (singular → object). Used by the view path.
+func JSON(w io.Writer, repo string, s score.PRScore, t term.Term) error {
+	return writeJSON(w, buildPR(repo, s), t)
+}
+
+// JSONArray writes a whole batch of measurements as a single JSON array,
+// mirroring `gh pr list --json` (plural → array). Used by the list path.
+// An empty or nil slice emits `[]` (not `null`), matching gh's empty-list
+// JSON so a downstream `jq length` sees 0 rather than a parse error.
+func JSONArray(w io.Writer, items []Item, t term.Term) error {
+	arr := make([]prJSON, 0, len(items))
+	for _, it := range items {
+		arr = append(arr, buildPR(it.Repo, it.Score))
+	}
+	return writeJSON(w, arr, t)
+}
+
+// writeJSON encodes v (a bare object or an array) and writes it, choosing
+// the output mode the same way gh's own --json does:
+//   - On a TTY, pretty-print (2-space indent) and colorize when color is
+//     enabled, via go-gh's jsonpretty (the same pretty-printer gh uses for
+//     its --json output and --jq rendering).
+//   - Piped/redirected, stay compact: a single line, no internal newlines.
+//     For an object that's `{...}\n`; for an array `[{...},{...}]\n`, the
+//     machine-parseable stream contract for multi-PR runs.
+func writeJSON(w io.Writer, v any, t term.Term) error {
+	if t.IsTerminalOutput() {
+		var buf bytes.Buffer
+		if err := json.NewEncoder(&buf).Encode(v); err != nil {
+			return err
+		}
+		return jsonpretty.Format(w, &buf, "  ", t.IsColorEnabled())
+	}
+	return json.NewEncoder(w).Encode(v)
 }
 
 // num6 formats a float64 to exactly 6 decimal places as a json.Number.
