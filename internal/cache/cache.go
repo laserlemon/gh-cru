@@ -1,8 +1,8 @@
 // Package cache is gh-cru's persistent disk cache for CODEOWNERS bodies.
-// It survives across CLI invocations so that `gh pr list | xargs gh cru`
-// runs as a sequence of fast subprocess calls instead of repeatedly
-// re-downloading the same multi-megabyte CODEOWNERS file from a large
-// monorepo.
+// It survives across CLI invocations so that repeated runs in the same
+// repo (several `gh cru <pr>` calls, or re-running `gh cru list`) reuse
+// one CODEOWNERS fetch instead of repeatedly re-downloading the same
+// multi-megabyte file from a large monorepo.
 //
 // Layout under base directory (defaults to os.UserCacheDir()/gh-cru):
 //

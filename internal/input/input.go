@@ -1,28 +1,20 @@
-// Package input parses gh-cru's PR inputs from CLI arguments and stdin.
+// Package input parses gh-cru's PR inputs from the JSON gh emits.
 //
-// Three input shapes are supported, in priority order:
+// gh cru shells out to `gh pr view`/`gh pr list` and feeds their JSON
+// output here. Parse accepts the three shapes that path can produce: a
+// JSON array (gh pr list), NDJSON (one object per line), or a single
+// JSON object (gh pr view). Each object may carry just a ref (e.g.
+// {"url": "..."}) or pre-fetched scoring fields that bypass the PR API
+// call entirely.
 //
-//  1. JSON on stdin (literal "-" arg, or auto-detected when args are empty
-//     and stdin is piped). Accepts a JSON array, NDJSON (one object per
-//     line), or a single JSON object. Each object may carry just a ref
-//     (e.g. {"url": "..."}) or pre-fetched scoring fields that bypass the
-//     PR API call entirely.
-//
-//  2. Bare CLI args (numbers, owner/repo#N shorthand, full URLs). Each is
-//     parsed by prref.Parse and emitted with PR=nil so callers fetch.
-//
-//  3. Mixed: pass "-" alongside other args. JSON entries and refs are
-//     concatenated in argument order.
-//
-// The returned []Input preserves caller ordering so the formatter prints
-// PRs in the order the user (or upstream pipeline) intended.
+// The returned []Input preserves source ordering so the formatter prints
+// PRs in the order gh returned them.
 package input
 
 import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -43,82 +35,31 @@ type Input struct {
 	Files []ghc.File // nil → caller must fetch (when ownership scoring is on)
 }
 
-// Source identifies how stdin was provided so callers can render
-// appropriate error messages.
-type Source int
-
-const (
-	SourceNone     Source = iota // no stdin consulted
-	SourceLiteral                // "-" appeared in args
-	SourceAutoPipe               // args empty, stdin was a pipe
-)
-
-// Parse turns CLI args + an optional stdin reader into a slice of Inputs.
+// Parse turns gh's JSON output into a slice of Inputs.
 //
-//	args        - the positional arguments to the cru command (no flags).
-//	stdin       - reader for stdin; may be nil to skip auto-detection.
-//	stdinIsPipe - true when stdin is a pipe (non-TTY). Used for auto-detect.
+//	r       - reader over gh's stdout (array, NDJSON, or a single object).
 //	defOwner,
-//	defRepo     - defaults for bare PR numbers in args (from --repo or git).
+//	defRepo - defaults for entries that carry a bare number but no repo
+//	          (from --repo or git context).
 //
-// Returns the parsed inputs in input order and the source of any stdin
-// consumption. Errors are returned for the entire batch; partial success
-// is the caller's responsibility (we don't want to silently drop bad
-// rows from a piped list).
-func Parse(args []string, stdin io.Reader, stdinIsPipe bool, defOwner, defRepo string) ([]Input, Source, error) {
-	// Decide whether stdin contributes. Literal "-" wins; auto-detect
-	// only applies when args is otherwise empty AND stdin is a pipe.
-	wantStdin := false
-	source := SourceNone
-	filtered := make([]string, 0, len(args))
-	for _, a := range args {
-		if a == "-" {
-			wantStdin = true
-			source = SourceLiteral
-			continue
-		}
-		filtered = append(filtered, a)
+// Returns the parsed inputs in source order. Errors abort the whole
+// batch; we don't silently drop bad rows from a piped list.
+func Parse(r io.Reader, defOwner, defRepo string) ([]Input, error) {
+	if r == nil {
+		return nil, nil
 	}
-	if !wantStdin && len(filtered) == 0 && stdin != nil && stdinIsPipe {
-		wantStdin = true
-		source = SourceAutoPipe
-	}
-
-	out := make([]Input, 0, len(args))
-
-	// Stdin first when present, so piped input preserves its order
-	// relative to subsequent bare args. (`gh cru - 99` means "stdin
-	// rows, then PR 99".)
-	if wantStdin {
-		if stdin == nil {
-			return nil, source, errors.New("stdin requested but no reader available")
-		}
-		ins, err := parseStdin(stdin, defOwner, defRepo)
-		if err != nil {
-			return nil, source, err
-		}
-		out = append(out, ins...)
-	}
-
-	for _, a := range filtered {
-		ref, err := prref.Parse(a, defOwner, defRepo)
-		if err != nil {
-			return nil, source, err
-		}
-		out = append(out, Input{Ref: ref})
-	}
-	return out, source, nil
+	return parseStdin(r, defOwner, defRepo)
 }
 
-// parseStdin reads the full stdin payload and dispatches based on shape:
-// JSON array, NDJSON (one object per line), or a single multi-line JSON
-// object. Bare numeric or URL refs on stdin are NOT supported; that's
-// a perpetual source of `xargs gh cru` surprise, and users who want it
-// can just `xargs` directly. Stdin is for JSON only.
+// parseStdin reads the full gh payload and dispatches based on shape:
+// JSON array (gh pr list), NDJSON (one object per line), or a single
+// multi-line JSON object (gh pr view). gh always emits one of these, so
+// there's no bare-ref handling here; identity comes from each object's
+// url/repository/repo/number fields.
 func parseStdin(r io.Reader, defOwner, defRepo string) ([]Input, error) {
 	raw, err := io.ReadAll(r)
 	if err != nil {
-		return nil, fmt.Errorf("read stdin: %w", err)
+		return nil, fmt.Errorf("read input: %w", err)
 	}
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
@@ -134,13 +75,13 @@ func parseStdin(r io.Reader, defOwner, defRepo string) ([]Input, error) {
 		if obj, ok := tryDecodeSingleObject(trimmed); ok {
 			in, err := parseJSONObject(obj, defOwner, defRepo)
 			if err != nil {
-				return nil, fmt.Errorf("stdin: %w", err)
+				return nil, fmt.Errorf("gh output: %w", err)
 			}
 			return []Input{in}, nil
 		}
 		return parseNDJSON(trimmed, defOwner, defRepo)
 	default:
-		return nil, fmt.Errorf("stdin: expected JSON object or array, got %q...", previewBytes(trimmed))
+		return nil, fmt.Errorf("gh output: expected JSON object or array, got %q...", previewBytes(trimmed))
 	}
 }
 
@@ -172,7 +113,7 @@ func parseJSONArray(raw []byte, defOwner, defRepo string) ([]Input, error) {
 	for i, entry := range arr {
 		in, err := parseJSONObject(entry, defOwner, defRepo)
 		if err != nil {
-			return nil, fmt.Errorf("stdin[%d]: %w", i, err)
+			return nil, fmt.Errorf("gh output[%d]: %w", i, err)
 		}
 		out = append(out, in)
 	}
@@ -196,12 +137,12 @@ func parseNDJSON(raw []byte, defOwner, defRepo string) ([]Input, error) {
 		}
 		in, err := parseJSONObject(line, defOwner, defRepo)
 		if err != nil {
-			return nil, fmt.Errorf("stdin line %d: %w", lineNum, err)
+			return nil, fmt.Errorf("gh output line %d: %w", lineNum, err)
 		}
 		out = append(out, in)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read stdin: %w", err)
+		return nil, fmt.Errorf("read gh output: %w", err)
 	}
 	return out, nil
 }
@@ -214,10 +155,12 @@ type jsonPR struct {
 	URL    string `json:"url"`    // https://github.com/o/r/pull/N
 	Number int    `json:"number"` // bare PR number
 	Repo   string `json:"repo"`   // "owner/name" shorthand for --repo
-	// gh pr list --json repository
+	// gh's nested repository object, as emitted by `gh search prs --json
+	// repository`: {name, nameWithOwner}. nameWithOwner ("owner/name")
+	// is the part we need; name alone can't resolve the owner.
 	Repository *struct {
-		Owner string `json:"owner"`
-		Name  string `json:"name"`
+		Name          string `json:"name"`          // bare repo name, e.g. "cli"
+		NameWithOwner string `json:"nameWithOwner"` // "owner/name", e.g. "cli/cli"
 	} `json:"repository"`
 
 	// Scoring fields (pre-fetched optional)
@@ -314,11 +257,15 @@ func resolveIdentity(j jsonPR, defOwner, defRepo string) (string, string, int, e
 	}
 	// Number is required for the remaining paths.
 	if j.Number == 0 {
-		return "", "", 0, errors.New("entry has no url and no number")
+		return "", "", 0, fmt.Errorf("entry has no url and no number")
 	}
-	// 2. repository.owner + .name (gh pr list shape).
-	if j.Repository != nil && j.Repository.Owner != "" && j.Repository.Name != "" {
-		return j.Repository.Owner, j.Repository.Name, j.Number, nil
+	// 2. repository.nameWithOwner ("owner/name"), gh's nested shape.
+	if j.Repository != nil && j.Repository.NameWithOwner != "" {
+		parts := strings.SplitN(j.Repository.NameWithOwner, "/", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return "", "", 0, fmt.Errorf("bad repository.nameWithOwner %q (want owner/name)", j.Repository.NameWithOwner)
+		}
+		return parts[0], parts[1], j.Number, nil
 	}
 	// 3. repo: "owner/name" shorthand.
 	if j.Repo != "" {

@@ -298,7 +298,7 @@ func scoreJSON(jsonOut []byte) error {
 	}
 
 	defOwner, defRepo := defaultRepo()
-	inputs, _, err := input.Parse(nil, bytes.NewReader(jsonOut), true, defOwner, defRepo)
+	inputs, err := input.Parse(bytes.NewReader(jsonOut), defOwner, defRepo)
 	if err != nil {
 		return err
 	}
