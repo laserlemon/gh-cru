@@ -29,7 +29,7 @@ import (
 //	+  All ownership    116  100.0%  2.000
 //	>  Your ownership     0    0.0%  0.000   (only when you own something)
 //
-//	Calculating your personal CRU requires read:org authorization to
+//	Calculating your CRU requires read:org authorization to
 //	read your team memberships.   (only when teams couldn't be enumerated)
 //
 // PR state/author/diffstat are omitted: callers running batches typically
@@ -68,6 +68,13 @@ func Human(w io.Writer, repo string, s score.PRScore, t term.Term) {
 	// owner-agnostic review weight; "CRU" rides as a trailing gray unit so
 	// every number below it is silently understood to be in CRU.
 	writeFormulaBlock(w, s, isTTY, color, width)
+
+	// --skip-ownership: CODEOWNERS was never consulted, so there's no
+	// ownership to show. End on the Base CRU line above rather than
+	// fabricate a 100%-unowned table (which would imply we looked).
+	if s.OwnershipSkipped {
+		return
+	}
 
 	fmt.Fprintln(w)
 	writeOwnerTable(w, s, isTTY, color, width)
@@ -216,7 +223,7 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 	// understate their real stake, so we explain why.
 	if !s.TeamsResolved && s.MyLogin != "" && s.MyOwnedLOC == 0 {
 		fmt.Fprintln(w)
-		note := "Calculating your personal CRU requires read:org authorization to read your team memberships."
+		note := "Calculating your CRU requires read:org authorization to read your team memberships."
 		if color {
 			fmt.Fprintln(w, muted(note, color))
 		} else {

@@ -449,6 +449,67 @@ func TestJSONShapeNoYouWhenAnon(t *testing.T) {
 	}
 }
 
+// --- --skip-ownership -----------------------------------------------------
+
+// TestHumanSkipOwnershipDropsTable verifies that under --skip-ownership
+// (OwnershipSkipped=true) the Human output ends on the Base CRU line and
+// renders NO ownership table: no CODE OWNER header, no All ownership row,
+// no Unowned row. The measurement degrades cleanly to size × risk.
+func TestHumanSkipOwnershipDropsTable(t *testing.T) {
+	// Even with a populated ownership map (as Compute would leave from a
+	// prior path), the skip flag must suppress the whole table.
+	owners := []score.Ownership{
+		{Owner: score.UnownedOwnerLabel, OwnedLOC: 240, Share: 1.0, Score: 12.0},
+	}
+	s := mkScore(240, false, owners, 240, "", nil)
+	s.OwnershipSkipped = true
+
+	var buf bytes.Buffer
+	Human(&buf, "acme/payments", s, noColorTerm())
+	out := stripANSI(buf.String())
+
+	// Formula block IS present (the user still gets the Base CRU).
+	for _, want := range []string{"Size", "Risk", "Base", "CRU"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("skip-ownership output missing formula label %q:\n%s", want, out)
+		}
+	}
+	// Ownership table is entirely absent.
+	for _, gone := range []string{"CODE OWNER", "All ownership", "Unowned", "Your ownership"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("skip-ownership output should not contain %q:\n%s", gone, out)
+		}
+	}
+}
+
+// TestJSONSkipOwnershipOmitsObject verifies that under --skip-ownership
+// the JSON omits the `ownership` object entirely (rather than emitting a
+// fabricated 100%-unowned block), while still carrying base_cru.
+func TestJSONSkipOwnershipOmitsObject(t *testing.T) {
+	owners := []score.Ownership{
+		{Owner: score.UnownedOwnerLabel, OwnedLOC: 240, Share: 1.0, Score: 12.0},
+	}
+	s := mkScore(240, false, owners, 240, "", nil)
+	s.OwnershipSkipped = true
+
+	var buf bytes.Buffer
+	if err := JSON(&buf, "acme/payments", s); err != nil {
+		t.Fatalf("JSON render: %v", err)
+	}
+	body := buf.String()
+	if strings.Contains(body, `"ownership"`) {
+		t.Errorf("skip-ownership JSON should omit the ownership object; got:\n%s", body)
+	}
+	// base_cru is still present: the measurement degrades to size × risk.
+	if !strings.Contains(body, `"base_cru"`) {
+		t.Errorf("skip-ownership JSON should still carry base_cru; got:\n%s", body)
+	}
+	// And it must remain valid JSON.
+	if _, err := json.Marshal(json.RawMessage(strings.TrimSpace(body))); err != nil {
+		t.Errorf("skip-ownership JSON is not valid: %v\n%s", err, body)
+	}
+}
+
 // --- table marker selection ----------------------------------------------
 
 // TestHumanMarkers verifies the marker glyphs render on the right rows:

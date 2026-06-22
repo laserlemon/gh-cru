@@ -9,14 +9,14 @@ A `gh` extension to measure pull requests in Code Review Units ([CRU](https://gi
 ```sh
 gh extension install laserlemon/gh-cru
 
-# Score one PR, mirroring "gh pr view" (the "view" verb is implied).
+# Measure one PR, mirroring "gh pr view" (the "view" verb is implied).
 gh cru                            # the PR for the current branch
 gh cru 1234                       # by number
 gh cru my-feature-branch          # by branch name
 gh cru https://github.com/owner/repo/pull/1234
 gh cru --repo owner/name 1234     # a PR in another repo
 
-# Score every PR that matches a "gh pr list" query.
+# Measure every PR that matches a "gh pr list" query.
 gh cru list --repo owner/name --state merged --limit 50
 gh cru list --author @me --state open
 gh cru list --search 'is:open updated:>2026-01-01'
@@ -34,7 +34,7 @@ CRU = size factor × ownership share × risk multiplier
   rank in a locked reference distribution of merged PR sizes from a large
   monolithic GitHub repository with thousands of individual contributors.
   The unit is calibrated so that one "typical" PR (the distribution's
-  median) scores exactly `1.0`. Bounded between ~0.18 (typos) and ~5.66
+  median) measures exactly `1.0`. Bounded between ~0.18 (typos) and ~5.66
   (monster PRs).
 - **ownership share** is `owned lines / total lines` based on CODEOWNERS.
   A 1,000-line PR where 50 lines touch your team's code costs you 5% of the
@@ -70,7 +70,7 @@ Base       3.065  CRU
 The heading mirrors `gh pr view`: the PR title in bold, then a gray
 `owner/repo#N` reference.
 
-The **formula block** is the score itself, one factor per row:
+The **formula block** is the measurement itself, one factor per row:
 
 | Row | Question it answers |
 |---|---|
@@ -111,7 +111,7 @@ For the reviewer above (`laserlemon`, on `acme/big-orca`), that's 40 direct
 
 ### `gh cru view`
 
-Scores one pull request, the same way `gh pr view` shows one. The verb is
+Measures one pull request, the same way `gh pr view` shows one. The verb is
 implied, so `gh cru` on its own is `gh cru view`. The PR argument takes the
 same forms `gh pr view` accepts:
 
@@ -124,19 +124,19 @@ gh cru --repo owner/name 1234     # a PR in another repo
 ```
 
 Under the hood `gh cru view` shells out to `gh pr view` to resolve and fetch
-the PR, then scores it. A few `gh pr view` flags are intercepted because they
-don't fit a score:
+the PR, then measures it. A few `gh pr view` flags are intercepted because they
+don't fit a measurement:
 
 | Flag | What gh cru does |
 |---|---|
 | `--json` | Forced to the field set gh cru needs. Your `--json` controls gh cru's own output instead (same as `gh cru list`). |
 | `--jq`/`-q`, `--template`/`-t` | Dropped (they format the inner JSON gh cru consumes). |
-| `--web`/`-w`, `--comments`/`-c` | Rejected: gh cru produces a score, not a browser view or comment thread. |
+| `--web`/`-w`, `--comments`/`-c` | Rejected: gh cru produces a measurement, not a browser view or comment thread. |
 | `--repo`/`-R` | Honored and forwarded. |
 
 ### `gh cru list`
 
-Forward any `gh pr list` flag to score the whole result set, in the order gh
+Forward any `gh pr list` flag to measure the whole result set, in the order gh
 returned them:
 
 ```sh
@@ -154,7 +154,7 @@ with `view`, gh cru forces its own `--json` field set; pass `--json` on
 gh cru --json list --state open
 ```
 
-`gh cru list` runs `gh pr list` once, then scores each PR locally without
+`gh cru list` runs `gh pr list` once, then measures each PR locally without
 per-PR API calls. For a single-repo `--state open` workload, that's
 **1 list call + 1 CODEOWNERS fetch** for all 50+ PRs.
 
@@ -232,8 +232,8 @@ to six decimals so downstream `==` comparisons stay stable. Pipe through
 |---|---|
 | `-R, --repo OWNER/NAME` | Repo for the PR; forwarded to `gh pr` |
 | `--json` | Structured output |
-| `--skip-ownership` | Skip CODEOWNERS lookups; treat ownership as 1.0 |
-| `--skip-personal` | Skip fetching your team memberships; no "your CRU" |
+| `--skip-ownership` | Skip CODEOWNERS entirely; end on Base CRU (size × risk), no ownership table |
+| `--anonymous` | Don't resolve your identity; omit the `Your ownership` row |
 | `--high-risk-label LABEL` | PR label(s) that mark high risk (4×); repeat or comma-separate (default: `risk:high`) |
 | `--medium-risk-label LABEL` | PR label(s) that mark medium risk (2×); repeat or comma-separate (default: `risk:medium`). High wins over medium |
 

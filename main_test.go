@@ -98,7 +98,7 @@ func resetRootFlags() {
 	repoFlag = ""
 	jsonFlag = false
 	noOwnersFlag = false
-	noPersonalFlag = false
+	anonymousFlag = false
 	highRiskLabelsFlag = []string{"risk:high"}
 	mediumRiskLabelsFlag = []string{"risk:medium"}
 }
@@ -110,7 +110,7 @@ func TestExtractRootFlags(t *testing.T) {
 		wantOut          []string
 		wantJSON         bool
 		wantNoOwn        bool
-		wantNoPers       bool
+		wantAnon         bool
 		wantRepo         string
 		wantHighLabels   []string
 		wantMediumLabels []string
@@ -131,11 +131,11 @@ func TestExtractRootFlags(t *testing.T) {
 			wantMediumLabels: []string{"risk:medium"},
 		},
 		{
-			name:             "--skip-ownership and --skip-personal strip",
-			in:               []string{"--skip-ownership", "--state", "open", "--skip-personal"},
+			name:             "--skip-ownership and --anonymous strip",
+			in:               []string{"--skip-ownership", "--state", "open", "--anonymous"},
 			wantOut:          []string{"--state", "open"},
 			wantNoOwn:        true,
-			wantNoPers:       true,
+			wantAnon:         true,
 			wantHighLabels:   []string{"risk:high"},
 			wantMediumLabels: []string{"risk:medium"},
 		},
@@ -242,8 +242,8 @@ func TestExtractRootFlags(t *testing.T) {
 			if noOwnersFlag != tc.wantNoOwn {
 				t.Errorf("noOwnersFlag = %v, want %v", noOwnersFlag, tc.wantNoOwn)
 			}
-			if noPersonalFlag != tc.wantNoPers {
-				t.Errorf("noPersonalFlag = %v, want %v", noPersonalFlag, tc.wantNoPers)
+			if anonymousFlag != tc.wantAnon {
+				t.Errorf("anonymousFlag = %v, want %v", anonymousFlag, tc.wantAnon)
 			}
 			if repoFlag != tc.wantRepo {
 				t.Errorf("repoFlag = %q, want %q", repoFlag, tc.wantRepo)

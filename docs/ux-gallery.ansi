@@ -12,12 +12,12 @@
 
 [35;1m▸ gh cru --help[0m
 
-  Score GitHub pull requests using the Code Review Unit formula.
+  Measure GitHub pull requests using the Code Review Unit formula.
   
   Subcommands mirror the popular "gh pr" commands:
   
-    gh cru view  Score one PR (mirrors "gh pr view"; the default, alias of the bare command)
-    gh cru list  Run "gh pr list" and score every PR it returns
+    gh cru view  Measure one PR (mirrors "gh pr view"; the default, alias of the bare command)
+    gh cru list  Run "gh pr list" and measure every PR it returns
   
   Run "gh cru view --help" for the PR argument forms gh cru view accepts.
   
@@ -28,23 +28,23 @@
   Available Commands:
     completion  Generate the autocompletion script for the specified shell
     help        Help about any command
-    list        Run `gh pr list` and score every PR it returns
-    view        Score one pull request (mirrors `gh pr view`)
+    list        Run `gh pr list` and measure every PR it returns
+    view        Measure one pull request (mirrors `gh pr view`)
   
   Flags:
+        --anonymous                   Don't resolve your identity; omit the "Your ownership" row
     -h, --help                        help for gh-cru
         --high-risk-label strings     PR label(s) that mark high risk (4× multiplier). Repeat or comma-separate for multiple (default [risk:high])
-        --json                        Emit the score as JSON
+        --json                        Emit the measurement as JSON
         --medium-risk-label strings   PR label(s) that mark medium risk (2× multiplier). Repeat or comma-separate for multiple. High wins if both match (default [risk:medium])
     -R, --repo string                 Default repo for the PR (owner/name)
-        --skip-ownership              Skip CODEOWNERS lookups; treat ownership as 1.0 (size×risk only)
-        --skip-personal               Skip fetching your team memberships; no "Your ownership" row
+        --skip-ownership              Skip CODEOWNERS entirely; end on Base CRU (size×risk), no ownership table
   
   Use "gh-cru [command] --help" for more information about a command.
 
 [35;1m▸ gh cru view --help[0m
 
-  Score one GitHub pull request, mirroring "gh pr view".
+  Measure one GitHub pull request, mirroring "gh pr view".
   
   The PR argument takes the same forms "gh pr view" accepts:
   
@@ -53,22 +53,22 @@
     my-feature-branch                       a branch name
     https://github.com/owner/name/pull/123  full URL
   
-  gh cru shells out to "gh pr view" to resolve and fetch the PR, then scores
-  it. A few "gh pr view" flags are intercepted because they don't fit a score:
+  gh cru shells out to "gh pr view" to resolve and fetch the PR, then measures
+  it. A few "gh pr view" flags are intercepted because they don't fit a measurement:
   
     --json is forced to the field set gh cru needs (your --json controls
       gh cru's OWN output instead, same as "gh cru list").
     --jq/-q and --template/-t are dropped (they format the inner JSON we consume).
-    --web/-w and --comments/-c are rejected (gh cru produces a score, not a view).
+    --web/-w and --comments/-c are rejected (gh cru produces a measurement, not a view).
     --repo/-R is honored and forwarded.
   
   Examples:
   
-    gh cru                          score the current branch's PR
-    gh cru 1234                     score one PR by number
-    gh cru my-feature-branch        score the PR for a branch
-    gh cru --repo owner/name 1234   score a PR in another repo
-    gh cru --json 1234              emit the score as JSON
+    gh cru                          measure the current branch's PR
+    gh cru 1234                     measure one PR by number
+    gh cru my-feature-branch        measure the PR for a branch
+    gh cru --repo owner/name 1234   measure a PR in another repo
+    gh cru --json 1234              emit the measurement as JSON
   
   Usage:
     gh-cru view [<number> | <url> | <branch>] [flags]
@@ -77,22 +77,22 @@
     -h, --help   help for view
   
   Global Flags:
+        --anonymous                   Don't resolve your identity; omit the "Your ownership" row
         --high-risk-label strings     PR label(s) that mark high risk (4× multiplier). Repeat or comma-separate for multiple (default [risk:high])
-        --json                        Emit the score as JSON
+        --json                        Emit the measurement as JSON
         --medium-risk-label strings   PR label(s) that mark medium risk (2× multiplier). Repeat or comma-separate for multiple. High wins if both match (default [risk:medium])
     -R, --repo string                 Default repo for the PR (owner/name)
-        --skip-ownership              Skip CODEOWNERS lookups; treat ownership as 1.0 (size×risk only)
-        --skip-personal               Skip fetching your team memberships; no "Your ownership" row
+        --skip-ownership              Skip CODEOWNERS entirely; end on Base CRU (size×risk), no ownership table
 
 [35;1m▸ gh cru list --help[0m
 
-  Run "gh pr list" with the given flags and score every PR returned,
+  Run "gh pr list" with the given flags and measure every PR returned,
   in the order gh returned them.
   
   All flags after "list" are forwarded to "gh pr list" unchanged, with one
   exception: --json is overridden (we need a specific field set). If you pass
   --json explicitly, your value is silently replaced with the fields gh-cru
-  requires to score without extra API calls.
+  requires to measure without extra API calls.
   
   The CRU rendering flags (--json on gh-cru itself, --skip-ownership, etc.)
   must appear BEFORE the "list" word so cobra picks them up:
@@ -114,15 +114,15 @@
     -h, --help   help for list
   
   Global Flags:
+        --anonymous                   Don't resolve your identity; omit the "Your ownership" row
         --high-risk-label strings     PR label(s) that mark high risk (4× multiplier). Repeat or comma-separate for multiple (default [risk:high])
-        --json                        Emit the score as JSON
+        --json                        Emit the measurement as JSON
         --medium-risk-label strings   PR label(s) that mark medium risk (2× multiplier). Repeat or comma-separate for multiple. High wins if both match (default [risk:medium])
     -R, --repo string                 Default repo for the PR (owner/name)
-        --skip-ownership              Skip CODEOWNERS lookups; treat ownership as 1.0 (size×risk only)
-        --skip-personal               Skip fetching your team memberships; no "Your ownership" row
+        --skip-ownership              Skip CODEOWNERS entirely; end on Base CRU (size×risk), no ownership table
 
 
-[46;30;1m 2. Scoring output — Human mode (the default on a TTY) [0m
+[46;30;1m 2. Measurement output — Human mode (the default on a TTY) [0m
 
 [2m  Every distinct ownership shape. Each PR heading is bold; the[0m
 [2m  formula block (Size / Risk / Base) sits above the owners table.[0m
@@ -213,9 +213,10 @@
 [46;30;1m 3. --skip-ownership [0m
 
 [2m  Skips CODEOWNERS entirely: no file fetch, no ownership lookup.[0m
-[2m  Ownership is treated as 1.0, so the score is just Size × Risk.[0m
-[2m  Because there's no ownership at all, personal scoring is implied-[0m
-[2m  off too (no "Your ownership" row). This is the lightest call.[0m
+[2m  The measurement is just Size × Risk, so the output ends on the[0m
+[2m  Base CRU line with NO ownership table (distinct from the genuine[0m
+[2m  no-CODEOWNERS case in section 2, which still shows a ~ Unowned[0m
+[2m  row). Resolving your identity is implied-off too.[0m
 
 [35;1m▸ gh cru --skip-ownership 78[0m
 
@@ -225,19 +226,15 @@
 [0;1;90mRisk[0m  [0;1;38;5;88mhigh[0m   4.000
 [0;1;90mBase[0m        12.261  [0;90mCRU[0m
 
-[0;4;90m [0m  [0;4;90mCODE OWNER   [0m  [0;4;90mLINES[0m  [0;4;90m SHARE[0m  [0;4;90m   CRU[0m
-[0;1;90m~[0m  [0;1;90mUnowned      [0m    240  100.0%  12.261
-[0;1;90m+[0m  [0;1;90mAll ownership[0m    240  100.0%  12.261
 
-
-[46;30;1m 4. --skip-personal [0m
+[46;30;1m 4. --anonymous [0m
 
 [2m  Keeps the full CODEOWNERS table (owners + All ownership) but[0m
-[2m  skips fetching YOUR team memberships, so there's no "Your[0m
-[2m  ownership" row and no read:org-scoped call. Compare against the[0m
-[2m  "everything at once" table in section 2, which DOES show it.[0m
+[2m  doesn't resolve YOUR identity, so there's no "Your ownership"[0m
+[2m  row and no read:org-scoped call. Compare against the "everything[0m
+[2m  at once" table in section 2, which DOES show it.[0m
 
-[35;1m▸ gh cru --skip-personal 78[0m
+[35;1m▸ gh cru --anonymous 78[0m
 
 [0;1;39mMigrate payments ledger to double-entry schema[0m [0;90macme/payments#78[0m
 
@@ -258,7 +255,7 @@
 [2m  When the token can't read your team memberships (the Codespaces[0m
 [2m  default GITHUB_TOKEN, or a fine-grained PAT without read:org),[0m
 [2m  gh-cru can't tell which team-owned lines are yours. It does NOT[0m
-[2m  fail; it scores what it can and footnotes the gap. The footnote[0m
+[2m  fail; it measures what it can and footnotes the gap. The footnote[0m
 [2m  fires only when your stake would read 0 AND you're not already a[0m
 [2m  direct @login owner, i.e. exactly when the 0 might mislead.[0m
 
@@ -275,7 +272,7 @@
 [0;1;90m+[0m  [0;1;90mAll ownership     [0m    120  100.0%  8.181
 [0;1;90m>[0m  [0;1;90mYour ownership    [0m      0    0.0%  0.000
 
-[0;90mCalculating your personal CRU requires read:org authorization to read your team memberships.[0m
+[0;90mCalculating your CRU requires read:org authorization to read your team memberships.[0m
 
 [2;3m  The same run also prints this to stderr if identity lookup itself failed:[0m
 [33m  warn: could not resolve your identities: <reason> (continuing without "Your ownership")[0m
@@ -346,6 +343,8 @@
 
 [35;1m▸ gh cru --json --skip-ownership 78[0m
 
+[2m  Under --skip-ownership the `ownership` object is omitted entirely;[0m
+[2m  the measurement degrades cleanly to base_cru.[0m
   [2m{[0m
   [2m  "repo": "acme/payments",[0m
   [2m  "number": 78,[0m
@@ -355,20 +354,7 @@
   [2m  "size_factor": 3.065154,[0m
   [2m  "risk_label": "high",[0m
   [2m  "risk_multiplier": 4.000000,[0m
-  [2m  "base_cru": 12.260615,[0m
-  [2m  "ownership": {[0m
-  [2m    "owners": [],[0m
-  [2m    "unowned": {[0m
-  [2m      "lines": 240,[0m
-  [2m      "share": 1.000000,[0m
-  [2m      "cru": 12.260615[0m
-  [2m    },[0m
-  [2m    "all": {[0m
-  [2m      "lines": 240,[0m
-  [2m      "share": 1.000000,[0m
-  [2m      "cru": 12.260615[0m
-  [2m    }[0m
-  [2m  }[0m
+  [2m  "base_cru": 12.260615[0m
   [2m}[0m
 
 

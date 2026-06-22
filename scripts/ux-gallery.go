@@ -1,8 +1,8 @@
 //go:build ignore
 
 // Command ux-gallery renders a single, self-contained tour of EVERY
-// user-facing gh-cru surface: help text, the scoring tables across all
-// ownership permutations, the --skip-ownership / --skip-personal
+// user-facing gh-cru surface: help text, the measurement tables across all
+// ownership permutations, the --skip-ownership / --anonymous
 // variants, the auth-degradation footnote, the JSON surface, and the
 // warning / error texts. It writes synthetic data only (no network), so
 // the output is deterministic and reviewable in one file.
@@ -62,7 +62,7 @@ func main() {
 	g.helpScreens()
 
 	// 2. THE SCORING SURFACE (Human mode) ----------------------------
-	g.h1("2", "Scoring output \u2014 Human mode (the default on a TTY)")
+	g.h1("2", "Measurement output \u2014 Human mode (the default on a TTY)")
 	g.note("Every distinct ownership shape. Each PR heading is bold; the")
 	g.note("formula block (Size / Risk / Base) sits above the owners table.")
 	g.legend()
@@ -75,27 +75,28 @@ func main() {
 	// 3. --skip-ownership --------------------------------------------
 	g.h1("3", "--skip-ownership")
 	g.note("Skips CODEOWNERS entirely: no file fetch, no ownership lookup.")
-	g.note("Ownership is treated as 1.0, so the score is just Size \u00d7 Risk.")
-	g.note("Because there's no ownership at all, personal scoring is implied-")
-	g.note("off too (no \"Your ownership\" row). This is the lightest call.")
+	g.note("The measurement is just Size \u00d7 Risk, so the output ends on the")
+	g.note("Base CRU line with NO ownership table (distinct from the genuine")
+	g.note("no-CODEOWNERS case in section 2, which still shows a ~ Unowned")
+	g.note("row). Resolving your identity is implied-off too.")
 	g.h2("gh cru --skip-ownership 78")
 	format.Human(g.out, "acme/payments", skipOwnershipScore(), t)
 
-	// 4. --skip-personal ---------------------------------------------
-	g.h1("4", "--skip-personal")
+	// 4. --anonymous -------------------------------------------------
+	g.h1("4", "--anonymous")
 	g.note("Keeps the full CODEOWNERS table (owners + All ownership) but")
-	g.note("skips fetching YOUR team memberships, so there's no \"Your")
-	g.note("ownership\" row and no read:org-scoped call. Compare against the")
-	g.note("\"everything at once\" table in section 2, which DOES show it.")
-	g.h2("gh cru --skip-personal 78")
-	format.Human(g.out, "acme/payments", skipPersonalScore(), t)
+	g.note("doesn't resolve YOUR identity, so there's no \"Your ownership\"")
+	g.note("row and no read:org-scoped call. Compare against the \"everything")
+	g.note("at once\" table in section 2, which DOES show it.")
+	g.h2("gh cru --anonymous 78")
+	format.Human(g.out, "acme/payments", anonymousScore(), t)
 
 	// 5. AUTH DEGRADATION --------------------------------------------
 	g.h1("5", "Insufficient token access (graceful degradation)")
 	g.note("When the token can't read your team memberships (the Codespaces")
 	g.note("default GITHUB_TOKEN, or a fine-grained PAT without read:org),")
 	g.note("gh-cru can't tell which team-owned lines are yours. It does NOT")
-	g.note("fail; it scores what it can and footnotes the gap. The footnote")
+	g.note("fail; it measures what it can and footnotes the gap. The footnote")
 	g.note("fires only when your stake would read 0 AND you're not already a")
 	g.note("direct @login owner, i.e. exactly when the 0 might mislead.")
 	g.h2("PR owned by a team you're (silently) on \u2014 footnote shown")
@@ -111,6 +112,8 @@ func main() {
 	g.h2("gh cru --json 78   (the \"everything at once\" PR)")
 	g.jsonBlock("acme/payments", buildScore(everythingScenario()))
 	g.h2("gh cru --json --skip-ownership 78")
+	g.note("Under --skip-ownership the `ownership` object is omitted entirely;")
+	g.note("the measurement degrades cleanly to base_cru.")
 	g.jsonBlock("acme/payments", skipOwnershipScore())
 
 	// 7. WARNINGS & ERRORS -------------------------------------------
@@ -342,19 +345,21 @@ func everythingScenario() scenario {
 	}
 }
 
-// skipOwnershipScore mirrors what Compute produces under --skip-ownership:
-// no CODEOWNERS, the whole PR attributed to one synthetic unowned owner,
-// so the score collapses to Size × Risk.
+// skipOwnershipScore mirrors what gh-cru produces under --skip-ownership:
+// CODEOWNERS is never consulted and OwnershipSkipped is set, so the
+// formatters end on Base CRU with no ownership table at all.
 func skipOwnershipScore() score.PRScore {
-	return buildScore(scenario{
+	s := buildScore(scenario{
 		Title: "Migrate payments ledger to double-entry schema", Repo: "acme/payments",
 		Number: 78, LOC: 240, Risk: cru.RiskHigh, HasCodeowners: false,
 	})
+	s.OwnershipSkipped = true
+	return s
 }
 
-// skipPersonalScore is the "everything" PR with personal scoring off:
-// full owners table, but MyLogin empty so no "Your ownership" row.
-func skipPersonalScore() score.PRScore {
+// anonymousScore is the "everything" PR with --anonymous: full owners
+// table, but MyLogin empty so no "Your ownership" row.
+func anonymousScore() score.PRScore {
 	c := everythingScenario()
 	c.MyLogin = ""
 	c.MyIdentities = nil

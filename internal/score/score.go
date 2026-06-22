@@ -46,6 +46,15 @@ type PRScore struct {
 	OwnershipMap   map[string]Ownership // owner login → ownership info
 	UnownedChanges int                  // LOC not covered by any CODEOWNERS rule
 
+	// OwnershipSkipped is true when the caller ran with --skip-ownership:
+	// CODEOWNERS was never fetched and no ownership was computed, so the
+	// measurement is Base CRU (Size × Risk) only. The formatters use this
+	// to suppress the ownership table entirely (Human) / omit the
+	// ownership object (JSON), keeping it distinct from the genuine
+	// "repo has no CODEOWNERS file" case, which still shows a 100%
+	// unowned row.
+	OwnershipSkipped bool
+
 	// MyLogin is the authenticated user's GitHub @login (without the @).
 	// Used as the label for the supplemental "user row" in the owners block
 	// when they have any ownership in the PR (direct or via team).
@@ -60,7 +69,7 @@ type PRScore struct {
 	TeamsResolved bool
 
 	// MyIdentities are the CODEOWNERS-compatible identities used to compute
-	// MyCRU. Empty when no personal scoring was requested (e.g. --skip-ownership).
+	// MyCRU. Empty when your CRU wasn't requested (e.g. --skip-ownership).
 	MyIdentities []string
 	MyOwnedLOC   int     // LOC of files owned by any of my identities (counted once)
 	MyShare      float64 // ownership share for "me": MyOwnedLOC / total LOC, in [0, 1]
@@ -135,10 +144,10 @@ type Ownership struct {
 // or empty to disable a tier.
 //
 // myLogin is the authenticated user's GitHub @login (no leading @); empty
-// when running without personal scoring. myIdentities, when non-empty, are
+// when running without your-CRU measurement. myIdentities, when non-empty, are
 // the CODEOWNERS-compatible identity strings (e.g. ["@laserlemon",
 // "@acme/justice-league"]) used to compute MyCRU. Pass nil to skip
-// personal scoring.
+// your-CRU measurement.
 func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLabels []string, mediumRiskLabels []string, myLogin string, myIdentities []string) PRScore {
 	risk := cru.RiskLow
 	switch {

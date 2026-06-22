@@ -193,7 +193,7 @@ func TestComputeOverlap(t *testing.T) {
 	}
 }
 
-// TestComputeMyCRUDirect verifies the personal-CRU computation for a
+// TestComputeMyCRUDirect verifies the your-CRU computation for a
 // direct @login match (not via team).
 func TestComputeMyCRUDirect(t *testing.T) {
 	p := pr(100)

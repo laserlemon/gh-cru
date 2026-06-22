@@ -57,16 +57,16 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		You     *rowJSON    `json:"you,omitempty"` // present iff identity is known
 	}
 	type out struct {
-		Repo           string        `json:"repo"`
-		Number         int           `json:"number"`
-		Title          string        `json:"title"`
-		Lines          int           `json:"lines"`
-		SizeLabel      string        `json:"size_label"`
-		SizeFactor     json.Number   `json:"size_factor"`
-		RiskLabel      string        `json:"risk_label"`
-		RiskMultiplier json.Number   `json:"risk_multiplier"`
-		BaseCRU        json.Number   `json:"base_cru"`
-		Ownership      ownershipJSON `json:"ownership"`
+		Repo           string         `json:"repo"`
+		Number         int            `json:"number"`
+		Title          string         `json:"title"`
+		Lines          int            `json:"lines"`
+		SizeLabel      string         `json:"size_label"`
+		SizeFactor     json.Number    `json:"size_factor"`
+		RiskLabel      string         `json:"risk_label"`
+		RiskMultiplier json.Number    `json:"risk_multiplier"`
+		BaseCRU        json.Number    `json:"base_cru"`
+		Ownership      *ownershipJSON `json:"ownership,omitempty"` // omitted under --skip-ownership
 	}
 
 	mySet := makeIdentitySet(s.MyIdentities)
@@ -131,12 +131,17 @@ func JSON(w io.Writer, repo string, s score.PRScore) error {
 		RiskLabel:      s.Risk.String(),
 		RiskMultiplier: num6(s.Risk.Multiplier()),
 		BaseCRU:        num6(s.CRU()),
-		Ownership: ownershipJSON{
+	}
+	// --skip-ownership: no CODEOWNERS was consulted, so omit the
+	// ownership object entirely rather than emit a fabricated 100%
+	// unowned block. The measurement degrades cleanly to base_cru.
+	if !s.OwnershipSkipped {
+		o.Ownership = &ownershipJSON{
 			Owners:  owners,
 			Unowned: unowned,
 			All:     rowJSON{Lines: all.Lines, Share: num6(all.Share), CRU: num6(all.CRU)},
 			You:     you,
-		},
+		}
 	}
 	enc := json.NewEncoder(w)
 	// Compact NDJSON: one PR per line, no internal newlines. This makes
