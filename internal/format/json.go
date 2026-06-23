@@ -219,41 +219,145 @@ func buildPR(repo string, s score.PRScore) prJSON {
 	return o
 }
 
+// prTopLevelFields is the canonical order of the measurement object's
+// top-level keys. It's the source of truth for two things: which keys
+// `--json=<fields>` may select, and the order a selected subset is
+// emitted in (so `--json=size,risk` and `--json=risk,size` are
+// byte-identical). Keep in sync with prJSON's field order.
+var prTopLevelFields = []string{
+	"repository", "pullRequest", "size", "risk", "baseCru", "ownership",
+}
+
+// JSONFields returns the selectable top-level keys in canonical order.
+// Exposed so the CLI can list them (e.g. in help or an error message).
+func JSONFields() []string {
+	return append([]string(nil), prTopLevelFields...)
+}
+
+// ValidateJSONFields checks a requested --json field selection against the
+// selectable top-level keys, returning a gh-style error naming the first
+// unknown field and the full available set. Called once up front so a bad
+// selection fails before any measurement is emitted. An empty selection
+// (bare --json = full object) is always valid.
+func ValidateJSONFields(fields []string) error {
+	known := make(map[string]bool, len(prTopLevelFields))
+	for _, k := range prTopLevelFields {
+		known[k] = true
+	}
+	for _, f := range fields {
+		if !known[f] {
+			return fmt.Errorf("unknown JSON field: %q\navailable fields:\n  %s",
+				f, strings.Join(prTopLevelFields, "\n  "))
+		}
+	}
+	return nil
+}
+
+// filterObject reduces a marshaled measurement object to the requested
+// top-level keys, emitted in canonical order. An empty `fields` returns
+// the object unchanged (bare --json = full). Keys that are valid but
+// absent from the marshaled output (ownership under --skip-ownership) are
+// silently skipped. Assumes fields were already validated.
+func filterObject(raw []byte, fields []string) ([]byte, error) {
+	if len(fields) == 0 {
+		return raw, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	wanted := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		wanted[f] = true
+	}
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	first := true
+	for _, k := range prTopLevelFields {
+		if !wanted[k] {
+			continue
+		}
+		val, ok := m[k]
+		if !ok {
+			continue // valid key, omitted from this object (e.g. ownership)
+		}
+		if !first {
+			buf.WriteByte(',')
+		}
+		first = false
+		key, _ := json.Marshal(k)
+		buf.Write(key)
+		buf.WriteByte(':')
+		buf.Write(val)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
 // JSON writes one PR's measurement as a bare JSON object, mirroring
-// `gh pr view --json` (singular → object). Used by the view path.
-func JSON(w io.Writer, repo string, s score.PRScore, t term.Term) error {
-	return writeJSON(w, buildPR(repo, s), t)
+// `gh pr view --json` (singular → object). Used by the view path. fields
+// selects a subset of top-level keys (empty = full object); callers
+// should ValidateJSONFields first.
+func JSON(w io.Writer, repo string, s score.PRScore, t term.Term, fields []string) error {
+	raw, err := json.Marshal(buildPR(repo, s))
+	if err != nil {
+		return err
+	}
+	obj, err := filterObject(raw, fields)
+	if err != nil {
+		return err
+	}
+	return writeRawJSON(w, obj, t)
 }
 
 // JSONArray writes a whole batch of measurements as a single JSON array,
 // mirroring `gh pr list --json` (plural → array). Used by the list path.
 // An empty or nil slice emits `[]` (not `null`), matching gh's empty-list
 // JSON so a downstream `jq length` sees 0 rather than a parse error.
-func JSONArray(w io.Writer, items []Item, t term.Term) error {
-	arr := make([]prJSON, 0, len(items))
+// fields selects a subset of top-level keys on each element (empty =
+// full); callers should ValidateJSONFields first.
+func JSONArray(w io.Writer, items []Item, t term.Term, fields []string) error {
+	parts := make([][]byte, 0, len(items))
 	for _, it := range items {
-		arr = append(arr, buildPR(it.Repo, it.Score))
+		raw, err := json.Marshal(buildPR(it.Repo, it.Score))
+		if err != nil {
+			return err
+		}
+		obj, err := filterObject(raw, fields)
+		if err != nil {
+			return err
+		}
+		parts = append(parts, obj)
 	}
-	return writeJSON(w, arr, t)
+	var buf bytes.Buffer
+	buf.WriteByte('[')
+	for i, p := range parts {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.Write(p)
+	}
+	buf.WriteByte(']')
+	return writeRawJSON(w, buf.Bytes(), t)
 }
 
-// writeJSON encodes v (a bare object or an array) and writes it, choosing
-// the output mode the same way gh's own --json does:
+// writeRawJSON writes already-marshaled JSON bytes, choosing the output
+// mode the same way gh's own --json does:
 //   - On a TTY, pretty-print (2-space indent) and colorize when color is
 //     enabled, via go-gh's jsonpretty (the same pretty-printer gh uses for
 //     its --json output and --jq rendering).
-//   - Piped/redirected, stay compact: a single line, no internal newlines.
-//     For an object that's `{...}\n`; for an array `[{...},{...}]\n`, the
-//     machine-parseable stream contract for multi-PR runs.
-func writeJSON(w io.Writer, v any, t term.Term) error {
+//   - Piped/redirected, stay compact: a single line plus a trailing
+//     newline. For an object that's `{...}\n`; for an array
+//     `[{...},{...}]\n`, the machine-parseable stream contract.
+func writeRawJSON(w io.Writer, raw []byte, t term.Term) error {
 	if t.IsTerminalOutput() {
-		var buf bytes.Buffer
-		if err := json.NewEncoder(&buf).Encode(v); err != nil {
-			return err
-		}
-		return jsonpretty.Format(w, &buf, "  ", t.IsColorEnabled())
+		return jsonpretty.Format(w, bytes.NewReader(raw), "  ", t.IsColorEnabled())
 	}
-	return json.NewEncoder(w).Encode(v)
+	if _, err := w.Write(raw); err != nil {
+		return err
+	}
+	_, err := w.Write([]byte{'\n'})
+	return err
 }
 
 // num6 formats a float64 to exactly 6 decimal places as a json.Number.

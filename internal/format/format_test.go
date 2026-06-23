@@ -164,7 +164,7 @@ func TestJSONShapeRendersExpectedFields(t *testing.T) {
 	s := mkScore(100, true, owners, 0, "laserlemon", []string{"@laserlemon"})
 
 	var buf bytes.Buffer
-	if err := JSON(&buf, "acme/web", s, compactTerm()); err != nil {
+	if err := JSON(&buf, "acme/web", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 	body := buf.String()
@@ -202,7 +202,7 @@ func TestJSONShapeUnownedIsSummaryRow(t *testing.T) {
 	s := mkScore(100, true, owners, 40, "", nil)
 
 	var buf bytes.Buffer
-	if err := JSON(&buf, "acme/web", s, compactTerm()); err != nil {
+	if err := JSON(&buf, "acme/web", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 	got := decodeJSON(t, &buf)
@@ -232,7 +232,7 @@ func TestJSONShapeUnownedZeroedWhenAbsent(t *testing.T) {
 	s := mkScore(100, true, owners, 0, "", nil)
 
 	var buf bytes.Buffer
-	if err := JSON(&buf, "acme/web", s, compactTerm()); err != nil {
+	if err := JSON(&buf, "acme/web", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 	body := buf.String()
@@ -253,7 +253,7 @@ func TestJSONShapeAllSumsEveryRow(t *testing.T) {
 	s := mkScore(80, true, owners, 0, "", nil)
 
 	var buf bytes.Buffer
-	if err := JSON(&buf, "acme/web", s, compactTerm()); err != nil {
+	if err := JSON(&buf, "acme/web", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 	got := decodeJSON(t, &buf)
@@ -283,7 +283,7 @@ func TestAllOwnershipAgreesAcrossSurfaces(t *testing.T) {
 
 	// JSON side: the canonical numbers.
 	var jbuf bytes.Buffer
-	if err := JSON(&jbuf, "acme/web", s, compactTerm()); err != nil {
+	if err := JSON(&jbuf, "acme/web", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 	got := decodeJSON(t, &jbuf)
@@ -329,7 +329,7 @@ func TestJSONShapeRoundsFloats(t *testing.T) {
 	s.MyCRU = 0.7777777
 
 	var buf bytes.Buffer
-	if err := JSON(&buf, "acme/web", s, compactTerm()); err != nil {
+	if err := JSON(&buf, "acme/web", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 
@@ -378,7 +378,7 @@ func TestJSONShapeOwnerTypes(t *testing.T) {
 		[]string{"@laserlemon", "@acme/justice-league"})
 
 	var buf bytes.Buffer
-	if err := JSON(&buf, "acme/web", s, compactTerm()); err != nil {
+	if err := JSON(&buf, "acme/web", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 	got := decodeJSON(t, &buf)
@@ -429,7 +429,7 @@ func TestJSONShapeYouShownWhenKnown(t *testing.T) {
 	s.MyCRU = 0.8
 
 	var buf bytes.Buffer
-	if err := JSON(&buf, "acme/web", s, compactTerm()); err != nil {
+	if err := JSON(&buf, "acme/web", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 	body := buf.String()
@@ -456,7 +456,7 @@ func TestJSONShapeYouZeroedAtNoStake(t *testing.T) {
 	s.MyOwnedLOC = 0
 
 	var buf bytes.Buffer
-	if err := JSON(&buf, "acme/web", s, compactTerm()); err != nil {
+	if err := JSON(&buf, "acme/web", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 	got := decodeJSON(t, &buf)
@@ -477,7 +477,7 @@ func TestJSONShapeNoYouWhenAnon(t *testing.T) {
 	s := mkScore(100, true, owners, 0, "", nil)
 
 	var buf bytes.Buffer
-	if err := JSON(&buf, "acme/web", s, compactTerm()); err != nil {
+	if err := JSON(&buf, "acme/web", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 	if strings.Contains(buf.String(), `"you":`) {
@@ -529,7 +529,7 @@ func TestJSONSkipOwnershipOmitsObject(t *testing.T) {
 	s.OwnershipSkipped = true
 
 	var buf bytes.Buffer
-	if err := JSON(&buf, "acme/payments", s, compactTerm()); err != nil {
+	if err := JSON(&buf, "acme/payments", s, compactTerm(), nil); err != nil {
 		t.Fatalf("JSON render: %v", err)
 	}
 	body := buf.String()
@@ -712,7 +712,7 @@ func TestJSONArrayEmitsArray(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := JSONArray(&buf, items, compactTerm()); err != nil {
+	if err := JSONArray(&buf, items, compactTerm(), nil); err != nil {
 		t.Fatalf("JSONArray: %v", err)
 	}
 
@@ -742,7 +742,7 @@ func TestJSONArrayEmitsArray(t *testing.T) {
 func TestJSONArrayEmptyIsBrackets(t *testing.T) {
 	for _, items := range [][]Item{nil, {}} {
 		var buf bytes.Buffer
-		if err := JSONArray(&buf, items, compactTerm()); err != nil {
+		if err := JSONArray(&buf, items, compactTerm(), nil); err != nil {
 			t.Fatalf("JSONArray(empty): %v", err)
 		}
 		if got := strings.TrimSpace(buf.String()); got != "[]" {
@@ -765,7 +765,7 @@ func TestJSONArrayCompactIsSingleLine(t *testing.T) {
 		}, 0, "", nil)},
 	}
 	var buf bytes.Buffer
-	if err := JSONArray(&buf, items, compactTerm()); err != nil {
+	if err := JSONArray(&buf, items, compactTerm(), nil); err != nil {
 		t.Fatalf("JSONArray: %v", err)
 	}
 	out := strings.TrimRight(buf.String(), "\n")
@@ -774,5 +774,98 @@ func TestJSONArrayCompactIsSingleLine(t *testing.T) {
 	}
 	if !strings.HasPrefix(out, "[") || !strings.HasSuffix(out, "]") {
 		t.Errorf("compact array should be bracket-wrapped, got:\n%q", out)
+	}
+}
+
+// --- field selection ------------------------------------------------------
+
+// TestValidateJSONFields covers the gh-style unknown-field error and that
+// an empty (bare --json = full) selection always validates.
+func TestValidateJSONFields(t *testing.T) {
+	if err := ValidateJSONFields(nil); err != nil {
+		t.Errorf("empty selection should be valid, got %v", err)
+	}
+	if err := ValidateJSONFields([]string{"size", "risk", "ownership"}); err != nil {
+		t.Errorf("known fields should validate, got %v", err)
+	}
+	err := ValidateJSONFields([]string{"size", "bogus"})
+	if err == nil {
+		t.Fatal("unknown field should error")
+	}
+	if !strings.Contains(err.Error(), "bogus") || !strings.Contains(err.Error(), "available") {
+		t.Errorf("error should name the bad field and list available; got: %v", err)
+	}
+}
+
+// TestJSONFieldSelection verifies --json=<fields> emits exactly the
+// requested top-level keys, always in canonical order regardless of the
+// order they were requested.
+func TestJSONFieldSelection(t *testing.T) {
+	owners := []score.Ownership{
+		{Owner: "@acme/eng", OwnedLOC: 100, Share: 1.0, Score: 2.0},
+	}
+	s := mkScore(100, true, owners, 0, "laserlemon", []string{"@laserlemon"})
+
+	// Requested out of canonical order; output must still be canonical
+	// (repository, pullRequest, size, risk, baseCru, ownership).
+	var buf bytes.Buffer
+	if err := JSON(&buf, "acme/web", s, compactTerm(), []string{"risk", "size"}); err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+	out := strings.TrimRight(buf.String(), "\n")
+	if out != `{"size":{"label":"L","factor":1.807063,"lines":100},"risk":{"label":"low","multiplier":1.000000}}` {
+		t.Errorf("subset selection wrong; got:\n%s", out)
+	}
+
+	// A single key.
+	buf.Reset()
+	if err := JSON(&buf, "acme/web", s, compactTerm(), []string{"baseCru"}); err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+	out = strings.TrimRight(buf.String(), "\n")
+	if out != `{"baseCru":1.807063}` {
+		t.Errorf("single-key selection wrong; got:\n%s", out)
+	}
+}
+
+// TestJSONFieldSelectionSkipsAbsentKey verifies that selecting a valid
+// key that's absent from this particular object (ownership under
+// --skip-ownership) silently omits it rather than emitting null.
+func TestJSONFieldSelectionSkipsAbsentKey(t *testing.T) {
+	s := mkScore(100, true, nil, 0, "", nil)
+	s.OwnershipSkipped = true
+
+	var buf bytes.Buffer
+	if err := JSON(&buf, "acme/web", s, compactTerm(), []string{"size", "ownership"}); err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+	out := strings.TrimRight(buf.String(), "\n")
+	if strings.Contains(out, "ownership") {
+		t.Errorf("ownership should be omitted under --skip-ownership, got:\n%s", out)
+	}
+	if !strings.Contains(out, `"size"`) {
+		t.Errorf("size should be present, got:\n%s", out)
+	}
+}
+
+// TestJSONArrayFieldSelection verifies field selection applies to every
+// element of the list-path array.
+func TestJSONArrayFieldSelection(t *testing.T) {
+	items := []Item{
+		{Repo: "acme/web", Score: mkScore(100, true, []score.Ownership{
+			{Owner: "@acme/eng", OwnedLOC: 100, Share: 1.0, Score: 2.0},
+		}, 0, "", nil)},
+		{Repo: "acme/api", Score: mkScore(50, true, []score.Ownership{
+			{Owner: "@acme/eng", OwnedLOC: 50, Share: 1.0, Score: 1.5},
+		}, 0, "", nil)},
+	}
+	var buf bytes.Buffer
+	if err := JSONArray(&buf, items, compactTerm(), []string{"repository"}); err != nil {
+		t.Fatalf("JSONArray: %v", err)
+	}
+	out := strings.TrimRight(buf.String(), "\n")
+	want := `[{"repository":{"name":"web","nameWithOwner":"acme/web"}},{"repository":{"name":"api","nameWithOwner":"acme/api"}}]`
+	if out != want {
+		t.Errorf("array subset selection wrong;\n got: %s\nwant: %s", out, want)
 	}
 }

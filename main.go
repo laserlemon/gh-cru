@@ -364,7 +364,7 @@ func scoreJSON(jsonOut []byte, asArray bool) error {
 		// (matching `gh pr list --json` on no matches); object and human
 		// modes stay silent.
 		if jsonFlag && asArray {
-			return format.JSONArray(os.Stdout, nil, term.FromEnv())
+			return format.JSONArray(os.Stdout, nil, term.FromEnv(), nil)
 		}
 		return nil
 	}
@@ -376,7 +376,7 @@ func scoreJSON(jsonOut []byte, asArray bool) error {
 	}
 	if len(inputs) == 0 {
 		if jsonFlag && asArray {
-			return format.JSONArray(os.Stdout, nil, term.FromEnv())
+			return format.JSONArray(os.Stdout, nil, term.FromEnv(), nil)
 		}
 		return nil
 	}
@@ -403,7 +403,7 @@ func scoreJSON(jsonOut []byte, asArray bool) error {
 			items = append(items, format.Item{Repo: repoStr, Score: s})
 		case jsonFlag:
 			// Bare object per PR (NDJSON when piped over multiple).
-			if err := format.JSON(os.Stdout, repoStr, s, term.FromEnv()); err != nil {
+			if err := format.JSON(os.Stdout, repoStr, s, term.FromEnv(), nil); err != nil {
 				return err
 			}
 		default:
@@ -418,7 +418,7 @@ func scoreJSON(jsonOut []byte, asArray bool) error {
 		}
 	}
 	if jsonFlag && asArray {
-		if err := format.JSONArray(os.Stdout, items, term.FromEnv()); err != nil {
+		if err := format.JSONArray(os.Stdout, items, term.FromEnv(), nil); err != nil {
 			return err
 		}
 	}
