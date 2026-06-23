@@ -97,7 +97,6 @@ func TestPRJSONFieldsCovers(t *testing.T) {
 func resetRootFlags() {
 	repoFlag = ""
 	jsonFlag = false
-	jsonRawFlag = ""
 	jsonFieldsFlag = nil
 	noOwnersFlag = false
 	anonymousFlag = false
@@ -283,6 +282,7 @@ func TestSetJSON(t *testing.T) {
 		wantFields []string
 	}{
 		{"bare sentinel = full", jsonNoOptVal, nil},
+		{"explicit full = full", "full", nil},
 		{"empty = full", "", nil},
 		{"single field", "size", []string{"size"}},
 		{"comma list", "size,risk", []string{"size", "risk"}},

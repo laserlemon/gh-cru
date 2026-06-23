@@ -39,7 +39,6 @@ var (
 	// only: an optional-value flag can't take a space-separated value
 	// without swallowing a following positional (gh cru --json 1234).
 	jsonFlag             bool
-	jsonRawFlag          string // raw --json value from pflag (root path); normalized by syncJSONFromRaw
 	jsonFieldsFlag       []string
 	noOwnersFlag         bool
 	anonymousFlag        bool
@@ -49,18 +48,32 @@ var (
 	commentsFlag         bool     // gh pr view --comments; rejected by gh cru (hidden, handled in runView)
 )
 
-// jsonNoOptVal is the sentinel pflag assigns to --json when it's given
-// with no =value (bare --json). It can't collide with a real selection
-// because it contains a NUL byte no gh field name uses. setJSON maps it
-// back to "full object, no field filter."
-const jsonNoOptVal = "\x00full\x00"
+// jsonNoOptVal is the value pflag assigns to --json when it's given with
+// no =value (bare --json). It's also accepted explicitly as --json=full,
+// a readable alias for "the whole document" that reads naturally in the
+// help line (--json[=full]). setJSON maps it to "full object, no filter."
+const jsonNoOptVal = "full"
+
+// jsonFlagValue is the pflag.Value backing --json. A custom type (rather
+// than StringVar) is what keeps the help line clean: an empty Type() drops
+// the "string" varname token, so the flag renders as --json[=full] instead
+// of --json string[="<sentinel>"]. Set funnels straight into setJSON, so
+// the root pflag path and the subcommand hand-parser share one parser.
+type jsonFlagValue struct{}
+
+func (jsonFlagValue) String() string { return "" }
+func (jsonFlagValue) Type() string   { return "" }
+func (jsonFlagValue) Set(raw string) error {
+	setJSON(raw)
+	return nil
+}
 
 // setJSON records a --json request and parses its optional value. raw is
-// the value as seen by either parser: jsonNoOptVal (bare --json => full),
-// "" (also full, e.g. the subcommand bare-flag path), or a comma list
-// ("size,risk" => subset). Comma-splitting trims blanks so "size," and
-// "size,,risk" behave. Idempotent and additive: called from the root
-// pflag path and the subcommand hand-parser alike.
+// the value as seen by either parser: jsonNoOptVal / "full" (bare --json
+// => full), "" (also full, e.g. the subcommand bare-flag path), or a comma
+// list ("size,risk" => subset). Comma-splitting trims blanks so "size,"
+// and "size,,risk" behave. Idempotent and additive: called from the root
+// pflag path (via jsonFlagValue.Set) and the subcommand hand-parser alike.
 func setJSON(raw string) {
 	jsonFlag = true
 	if raw == "" || raw == jsonNoOptVal {
@@ -110,11 +123,12 @@ Run "gh cru view --help" for the PR argument forms gh cru view accepts.`,
 	}
 	root.PersistentFlags().StringVarP(&repoFlag, "repo", "R", "",
 		"Default repo for the PR (owner/name)")
-	root.PersistentFlags().StringVar(&jsonRawFlag, "json", "",
+	root.PersistentFlags().Var(jsonFlagValue{}, "json",
 		"Emit the measurement as JSON; --json=<fields> selects top-level keys")
 	// Optional value: bare --json carries jsonNoOptVal (full object),
 	// --json=size,risk carries the selection. NoOptDefVal is what makes
-	// the value optional under pflag.
+	// the value optional under pflag, and it's what renders in the help
+	// line as --json[=full].
 	root.PersistentFlags().Lookup("json").NoOptDefVal = jsonNoOptVal
 	root.PersistentFlags().BoolVar(&noOwnersFlag, "skip-ownership", false,
 		"Skip CODEOWNERS entirely; end on Base CRU (size×risk), no ownership table")
@@ -519,16 +533,6 @@ func runList(cmd *cobra.Command, args []string) error {
 // gh-cru-only flags (stripped): --json, --skip-ownership, --anonymous,
 // --high-risk-label, --medium-risk-label. Anything else passes through unmodified.
 func extractRootFlags(args []string) []string {
-	// Root (bare command) path: pflag already parsed --json into
-	// jsonRawFlag. Sync it here so both entry paths converge on
-	// jsonFlag/jsonFieldsFlag. On the subcommand path jsonRawFlag stays
-	// empty (the hand-parser below calls setJSON instead), so this is a
-	// no-op there. jsonRawFlag != "" means --json was seen: the value is
-	// jsonNoOptVal for bare --json or the =selection.
-	if jsonRawFlag != "" {
-		setJSON(jsonRawFlag)
-	}
-
 	out := make([]string, 0, len(args))
 	skip := 0
 
