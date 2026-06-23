@@ -106,10 +106,10 @@ type jsonRow struct {
 type jsonOwner struct {
 	Name  string  `json:"name"`
 	Type  string  `json:"type"`
+	IsYou bool    `json:"isYou"`
 	Lines int     `json:"lines"`
 	Share float64 `json:"share"`
 	CRU   float64 `json:"cru"`
-	IsYou bool    `json:"isYou"`
 }
 
 type jsonOut struct {
@@ -117,15 +117,25 @@ type jsonOut struct {
 		Name          string `json:"name"`
 		NameWithOwner string `json:"nameWithOwner"`
 	} `json:"repository"`
-	Number         int     `json:"number"`
-	Title          string  `json:"title"`
-	Lines          int     `json:"lines"`
-	SizeLabel      string  `json:"sizeLabel"`
-	SizeFactor     float64 `json:"sizeFactor"`
-	RiskLabel      string  `json:"riskLabel"`
-	RiskMultiplier float64 `json:"riskMultiplier"`
-	BaseCRU        float64 `json:"baseCru"`
-	Ownership      struct {
+	PullRequest struct {
+		Additions int    `json:"additions"`
+		Deletions int    `json:"deletions"`
+		Number    int    `json:"number"`
+		State     string `json:"state"`
+		Title     string `json:"title"`
+		URL       string `json:"url"`
+	} `json:"pullRequest"`
+	Size struct {
+		Label  string  `json:"label"`
+		Factor float64 `json:"factor"`
+		Lines  int     `json:"lines"`
+	} `json:"size"`
+	Risk struct {
+		Label      string  `json:"label"`
+		Multiplier float64 `json:"multiplier"`
+	} `json:"risk"`
+	BaseCRU   float64 `json:"baseCru"`
+	Ownership struct {
 		Owners  []jsonOwner `json:"owners"`
 		Unowned jsonRow     `json:"unowned"`
 		All     jsonRow     `json:"all"`
@@ -142,10 +152,12 @@ func decodeJSON(t *testing.T, buf *bytes.Buffer) jsonOut {
 	return got
 }
 
-// TestJSONShapeOnlyRendersUsedFields verifies the schema carries exactly
-// the fields the human output draws and omits the PR metadata it doesn't
-// use (author, state, additions, deletions, files, my_identities).
-func TestJSONShapeOnlyRendersUsedFields(t *testing.T) {
+// TestJSONShapeRendersExpectedFields pins the schema contract: the two
+// borrowed gh objects (repository, pullRequest) carry their canonical
+// fields, the CRU grade lives in size/risk/baseCru/ownership, and the
+// fields we deliberately don't surface (author, and any snake_case
+// internal spellings) stay out.
+func TestJSONShapeRendersExpectedFields(t *testing.T) {
 	owners := []score.Ownership{
 		{Owner: "@acme/eng", OwnedLOC: 100, Share: 1.0, Score: 2.0},
 	}
@@ -156,17 +168,22 @@ func TestJSONShapeOnlyRendersUsedFields(t *testing.T) {
 		t.Fatalf("JSON render: %v", err)
 	}
 	body := buf.String()
+	// author isn't surfaced; neither are the snake_case internal names a
+	// naive marshal might leak.
 	for _, gone := range []string{
-		`"author"`, `"state"`, `"additions"`, `"deletions"`, `"files"`,
-		`"my_identities"`, `"normal_cru"`, `"total_cru"`, `"requested_cru"`,
-		`"ownership_share"`, `"owned_loc"`, `"unowned_loc"`,
+		`"author"`, `"my_identities"`, `"normal_cru"`, `"total_cru"`,
+		`"requested_cru"`, `"ownership_share"`, `"owned_loc"`, `"unowned_loc"`,
+		`"sizeLabel"`, `"sizeFactor"`, `"riskLabel"`, `"riskMultiplier"`,
 	} {
 		if strings.Contains(body, gone) {
 			t.Errorf("JSON should not contain %s; got:\n%s", gone, body)
 		}
 	}
+	// The borrowed objects and the CRU grade keys are all present.
 	for _, want := range []string{
-		`"baseCru"`, `"ownership"`, `"share"`, `"cru"`, `"lines"`,
+		`"repository"`, `"pullRequest"`, `"additions"`, `"deletions"`,
+		`"state"`, `"url"`, `"size"`, `"risk"`, `"baseCru"`, `"ownership"`,
+		`"share"`, `"cru"`, `"lines"`, `"factor"`, `"multiplier"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("JSON missing expected key %s; got:\n%s", want, body)
@@ -332,8 +349,8 @@ func TestJSONShapeRoundsFloats(t *testing.T) {
 	if got.Repository.NameWithOwner != "acme/web" {
 		t.Errorf("repository.nameWithOwner = %q, want acme/web", got.Repository.NameWithOwner)
 	}
-	if got.SizeFactor != 0.123457 {
-		t.Errorf("sizeFactor = %v, want 0.123457", got.SizeFactor)
+	if got.Size.Factor != 0.123457 {
+		t.Errorf("size.factor = %v, want 0.123457", got.Size.Factor)
 	}
 	if got.Ownership.You == nil {
 		t.Fatalf("missing ownership.you block")
@@ -714,8 +731,8 @@ func TestJSONArrayEmitsArray(t *testing.T) {
 		t.Errorf("element 1 repository = %+v, want {api, acme/api}", got[1].Repository)
 	}
 	// Order is preserved (the batch renders in gh's returned order).
-	if got[0].Lines != 100 || got[1].Lines != 250 {
-		t.Errorf("lines = [%d, %d], want [100, 250] (order preserved)", got[0].Lines, got[1].Lines)
+	if got[0].Size.Lines != 100 || got[1].Size.Lines != 250 {
+		t.Errorf("lines = [%d, %d], want [100, 250] (order preserved)", got[0].Size.Lines, got[1].Size.Lines)
 	}
 }
 

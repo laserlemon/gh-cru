@@ -25,12 +25,12 @@ type rowJSON struct {
 // ownerJSON is a named owner row: a rowJSON plus the identity columns
 // that drive the table marker (name + type + isYou → =/*/•).
 type ownerJSON struct {
-	Name  string      `json:"name"` // bare login or "org/team"; "@" stripped
-	Type  string      `json:"type"` // "user" | "team"
+	Name  string      `json:"name"`  // bare login or "org/team"; "@" stripped
+	Type  string      `json:"type"`  // "user" | "team"
+	IsYou bool        `json:"isYou"` // direct @login or team-membership match
 	Lines int         `json:"lines"`
 	Share json.Number `json:"share"`
 	CRU   json.Number `json:"cru"`
-	IsYou bool        `json:"isYou"` // direct @login or team-membership match
 }
 
 type ownershipJSON struct {
@@ -40,8 +40,8 @@ type ownershipJSON struct {
 	You     *rowJSON    `json:"you,omitempty"` // present iff identity is known
 }
 
-// repositoryJSON mirrors gh's own nested repository object (as emitted
-// by `gh search prs --json repository`): the bare name plus the
+// repositoryJSON mirrors gh's own repository object (as emitted by
+// `gh search prs --json repository`): the bare name plus the
 // owner-qualified nameWithOwner. gh never abbreviates to "repo" or
 // flattens it to a string, so neither do we. `id` is intentionally
 // omitted: a repo node ID is useless to a CRU consumer and isn't on
@@ -51,23 +51,48 @@ type repositoryJSON struct {
 	NameWithOwner string `json:"nameWithOwner"` // "owner/name", e.g. "cli/cli"
 }
 
-// prJSON is the top-level per-PR measurement object. Its schema carries
-// exactly what the human renderer draws, nothing more: the heading
-// (repository/number/title), the Size/Risk/Base formula block, and an
-// `ownership` object holding the owner table. PR metadata the score
-// doesn't use (author, state, additions/deletions, file count) is
-// deliberately omitted; consumers who want it have `gh pr view --json`.
+// pullRequestJSON carries the PR-intrinsic fields gh itself exposes on a
+// pull request, and only those: borrowing gh's object means it may hold
+// canonical gh `--json` fields, never CRU-synthesized ones (lines, size,
+// etc. live at the top level). Field order matches gh's --json output,
+// which sorts keys alphabetically.
+type pullRequestJSON struct {
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Number    int    `json:"number"`
+	State     string `json:"state"`
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+}
+
+// sizeJSON is the CRU size grade plus its input. lines is the measured
+// unit (additions + deletions) the grade is computed from; label/factor
+// are the grade. Mirrors the human output's "Size <bucket> <factor> <n>
+// lines" row.
+type sizeJSON struct {
+	Label  string      `json:"label"`
+	Factor json.Number `json:"factor"`
+	Lines  int         `json:"lines"`
+}
+
+// riskJSON is the CRU risk grade: the tier label and its multiplier.
+type riskJSON struct {
+	Label      string      `json:"label"`
+	Multiplier json.Number `json:"multiplier"`
+}
+
+// prJSON is the top-level per-PR measurement object. Two borrowed gh
+// objects (repository, pullRequest) carry PR-intrinsic identity; the
+// remaining keys (size, risk, baseCru, ownership) are CRU's own
+// vocabulary for the grade. repository stays a top-level sibling of
+// pullRequest, matching how `gh search prs` rows expose it.
 type prJSON struct {
-	Repository     repositoryJSON `json:"repository"`
-	Number         int            `json:"number"`
-	Title          string         `json:"title"`
-	Lines          int            `json:"lines"`
-	SizeLabel      string         `json:"sizeLabel"`
-	SizeFactor     json.Number    `json:"sizeFactor"`
-	RiskLabel      string         `json:"riskLabel"`
-	RiskMultiplier json.Number    `json:"riskMultiplier"`
-	BaseCRU        json.Number    `json:"baseCru"`
-	Ownership      *ownershipJSON `json:"ownership,omitempty"` // omitted under --skip-ownership
+	Repository  repositoryJSON  `json:"repository"`
+	PullRequest pullRequestJSON `json:"pullRequest"`
+	Size        sizeJSON        `json:"size"`
+	Risk        riskJSON        `json:"risk"`
+	BaseCRU     json.Number     `json:"baseCru"`
+	Ownership   *ownershipJSON  `json:"ownership,omitempty"` // omitted under --skip-ownership
 }
 
 // Item pairs a repo ("owner/name") with its computed score for array
@@ -160,15 +185,25 @@ func buildPR(repo string, s score.PRScore) prJSON {
 		repoName = repo[i+1:]
 	}
 	o := prJSON{
-		Repository:     repositoryJSON{Name: repoName, NameWithOwner: repo},
-		Number:         s.PR.Number,
-		Title:          s.PR.Title,
-		Lines:          s.LOC,
-		SizeLabel:      s.Size.String(),
-		SizeFactor:     num6(float64(s.Size)),
-		RiskLabel:      s.Risk.String(),
-		RiskMultiplier: num6(s.Risk.Multiplier()),
-		BaseCRU:        num6(s.CRU()),
+		Repository: repositoryJSON{Name: repoName, NameWithOwner: repo},
+		PullRequest: pullRequestJSON{
+			Additions: s.PR.Additions,
+			Deletions: s.PR.Deletions,
+			Number:    s.PR.Number,
+			State:     prState(s.PR.State, s.PR.Merged),
+			Title:     s.PR.Title,
+			URL:       s.PR.URL,
+		},
+		Size: sizeJSON{
+			Label:  s.Size.String(),
+			Factor: num6(float64(s.Size)),
+			Lines:  s.LOC,
+		},
+		Risk: riskJSON{
+			Label:      s.Risk.String(),
+			Multiplier: num6(s.Risk.Multiplier()),
+		},
+		BaseCRU: num6(s.CRU()),
 	}
 	// --skip-ownership: no CODEOWNERS was consulted, so omit the
 	// ownership object entirely rather than emit a fabricated 100%
@@ -229,4 +264,27 @@ func writeJSON(w io.Writer, v any, t term.Term) error {
 // can't be represented exactly in float64). Matches the cru CLI's num6.
 func num6(f float64) json.Number {
 	return json.Number(fmt.Sprintf("%.6f", f))
+}
+
+// prState normalizes the internal PR state to gh's canonical --json
+// casing (OPEN / CLOSED / MERGED). The internal state is unreliable on
+// its own: the JSON path lower-cases it ("MERGED" -> "merged") and the
+// REST path leaves a merged PR as "closed" with merged carried on a
+// separate bool. Since pullRequest.state is a borrowed gh field, it must
+// read the way gh itself emits it, so merged (authoritative on both
+// paths) wins over the raw string; otherwise upper-case what we have.
+func prState(state string, merged bool) string {
+	if merged {
+		return "MERGED"
+	}
+	switch strings.ToLower(state) {
+	case "merged":
+		return "MERGED"
+	case "open":
+		return "OPEN"
+	case "closed":
+		return "CLOSED"
+	default:
+		return strings.ToUpper(state)
+	}
 }
