@@ -564,12 +564,13 @@ func extractRootFlags(args []string) []string {
 
 // prJSONFields is the field set gh-cru asks `gh pr view`/`gh pr list` to
 // emit so the scorer can run without per-PR API fetches. These are the
-// gh `--json` field names (camelCase: changedFiles, mergeCommit,
-// baseRefName), distinct from the REST snake_case spellings in
+// gh `--json` field names (camelCase: mergeCommit, baseRefName),
+// distinct from the REST snake_case spellings in
 // internal/gh. Order doesn't matter to gh.
 //
 // Notable omissions in `gh pr list --json`:
-//   - No `merged` boolean (use state == "MERGED").
+//   - No `merged` boolean: state == "MERGED" is authoritative on both the
+//     view and list paths, so we key merged-detection on state alone.
 //   - No `repository` field (single-repo command; we derive owner/repo from
 //     --repo or the URL). When gh ever adds --search across repos, we'll
 //     need a per-row repo block; today we don't.
@@ -581,13 +582,10 @@ var prJSONFields = []string{
 	"number",
 	"title",
 	"state",
-	"author",
 	"additions",
 	"deletions",
-	"changedFiles",
 	"baseRefName",
 	"mergeCommit",
-	"mergedAt", // proxy for "merged?" since gh pr list lacks `merged` bool
 	"labels",
 	"files",
 }
