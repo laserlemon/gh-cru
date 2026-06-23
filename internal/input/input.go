@@ -166,8 +166,6 @@ type jsonPR struct {
 	// Scoring fields (pre-fetched optional)
 	Title        string `json:"title"`
 	State        string `json:"state"`
-	Merged       bool   `json:"merged"`
-	MergedAt     string `json:"mergedAt"` // gh pr list shape: non-empty means merged
 	Additions    int    `json:"additions"`
 	Deletions    int    `json:"deletions"`
 	ChangedFiles int    `json:"changedFiles"`
@@ -289,18 +287,16 @@ func hasScoringFields(j jsonPR) bool {
 	// We trust the source: any non-zero LOC field signals "scoring
 	// fields included." A truly empty PR (0 additions + 0 deletions)
 	// is unusual; force re-fetch in that case to be safe.
-	return j.Additions != 0 || j.Deletions != 0 || j.State != "" || j.MergeCommit != nil || j.MergedAt != ""
+	return j.Additions != 0 || j.Deletions != 0 || j.State != "" || j.MergeCommit != nil
 }
 
 // jsonToPR projects the JSON shape into the internal ghc.PR struct used
 // by the scorer. State is lower-cased to match gh CLI's "OPEN"/"MERGED"
-// versus the REST API's "open"/"merged". Merged status is derived from
-// (in priority order): explicit `merged` bool, non-empty `mergedAt`,
-// state == "MERGED", or non-nil mergeCommit.
+// versus the REST API's "open"/"merged". Merged status rides on the
+// canonical state enum (state == "MERGED"), with a non-nil mergeCommit as
+// a backstop for any source that supplies the merge ref without the state.
 func jsonToPR(j jsonPR, number int) ghc.PR {
-	merged := j.Merged ||
-		j.MergedAt != "" ||
-		strings.EqualFold(j.State, "merged") ||
+	merged := strings.EqualFold(j.State, "merged") ||
 		j.MergeCommit != nil
 	pr := ghc.PR{
 		Number:    number,
