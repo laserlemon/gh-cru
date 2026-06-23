@@ -73,21 +73,21 @@ func TestStripJSONFlags(t *testing.T) {
 	}
 }
 
-func TestListJSONFieldsCovers(t *testing.T) {
-	// listJSONFields needs everything score.Compute reads. Sanity-check
+func TestPRJSONFieldsCovers(t *testing.T) {
+	// prJSONFields needs everything score.Compute reads. Sanity-check
 	// that the must-haves are present so a future refactor doesn't
 	// silently drop a field and force an extra API call.
 	required := []string{
 		"url", "number", "additions", "deletions", "changedFiles",
 		"baseRefName", "mergeCommit", "labels", "author", "state", "files",
 	}
-	set := make(map[string]bool, len(listJSONFields))
-	for _, f := range listJSONFields {
+	set := make(map[string]bool, len(prJSONFields))
+	for _, f := range prJSONFields {
 		set[f] = true
 	}
 	for _, f := range required {
 		if !set[f] {
-			t.Errorf("listJSONFields missing required field %q", f)
+			t.Errorf("prJSONFields missing required field %q", f)
 		}
 	}
 }

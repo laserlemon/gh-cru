@@ -226,7 +226,7 @@ func runView(cmd *cobra.Command, args []string) error {
 	// gh pr view <ref?> --json <our fields>. A missing ref is fine: gh pr
 	// view with no positional resolves the current branch's PR.
 	cmdArgs := append([]string{"pr", "view"}, forwarded...)
-	cmdArgs = append(cmdArgs, "--json", strings.Join(listJSONFields, ","))
+	cmdArgs = append(cmdArgs, "--json", strings.Join(prJSONFields, ","))
 
 	out, err := runGH(cmdArgs)
 	if err != nil {
@@ -444,7 +444,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	// required --json field set.
 	forwarded := stripJSONFlags(args)
 	cmdArgs := append([]string{"pr", "list"}, forwarded...)
-	cmdArgs = append(cmdArgs, "--json", strings.Join(listJSONFields, ","))
+	cmdArgs = append(cmdArgs, "--json", strings.Join(prJSONFields, ","))
 
 	out, err := runGH(cmdArgs)
 	if err != nil {
@@ -562,8 +562,11 @@ func extractRootFlags(args []string) []string {
 	return out
 }
 
-// listJSONFields is the field set gh-cru asks `gh pr list` to emit so the
-// scorer can run without per-PR API fetches. Order doesn't matter to gh.
+// prJSONFields is the field set gh-cru asks `gh pr view`/`gh pr list` to
+// emit so the scorer can run without per-PR API fetches. These are the
+// gh `--json` field names (camelCase: changedFiles, mergeCommit,
+// baseRefName), distinct from the REST snake_case spellings in
+// internal/gh. Order doesn't matter to gh.
 //
 // Notable omissions in `gh pr list --json`:
 //   - No `merged` boolean (use state == "MERGED").
@@ -573,7 +576,7 @@ func extractRootFlags(args []string) []string {
 //   - body, comments, reviews not used by scoring (large payloads).
 //   - reviewRequests / assignees not used by scoring; omitted to keep the
 //     payload lean.
-var listJSONFields = []string{
+var prJSONFields = []string{
 	"url",
 	"number",
 	"title",
