@@ -59,9 +59,9 @@ Risk  low  1.000
 Base       3.065  CRU
 
    CODE OWNER               LINES   SHARE    CRU
-=  laserlemon                  40   16.7%  0.511
-*  acme/big-orca               80   33.3%  1.022
 •  acme/payments-reviewers    100   41.7%  1.277
+*  acme/big-orca               80   33.3%  1.022
+=  laserlemon                  40   16.7%  0.511
 ~  Unowned                     40   16.7%  0.511
 +  All ownership              260  108.3%  3.321
 >  Your ownership             120   50.0%  1.533
@@ -190,9 +190,9 @@ $ gh cru --repo acme/web 1234 --json | jq
   "baseCru": 3.065154,
   "ownership": {
     "owners": [
-      { "name": "laserlemon",              "type": "user", "isYou": true,  "lines": 40,  "share": 0.166667, "cru": 0.510859 },
+      { "name": "acme/payments-reviewers", "type": "team", "isYou": false, "lines": 100, "share": 0.416667, "cru": 1.277147 },
       { "name": "acme/big-orca",           "type": "team", "isYou": true,  "lines": 80,  "share": 0.333333, "cru": 1.021718 },
-      { "name": "acme/payments-reviewers", "type": "team", "isYou": false, "lines": 100, "share": 0.416667, "cru": 1.277147 }
+      { "name": "laserlemon",              "type": "user", "isYou": true,  "lines": 40,  "share": 0.166667, "cru": 0.510859 }
     ],
     "unowned": { "lines": 40,  "share": 0.166667, "cru": 0.510859 },
     "all":     { "lines": 260, "share": 1.083333, "cru": 3.320583 },

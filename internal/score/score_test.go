@@ -303,6 +303,45 @@ func TestSortedOwnersOrder(t *testing.T) {
 	}
 }
 
+// TestSortedOwnersRanking verifies the ranking contract: real owners are
+// ordered by descending CRU, ties break alphabetically, and the synthetic
+// unowned owner is pinned LAST even when its score outranks a real owner.
+func TestSortedOwnersRanking(t *testing.T) {
+	// Files crafted so owned lines (hence CRU) differ per owner, with a
+	// deliberate tie between two owners to exercise the alphabetical break,
+	// and a large unowned chunk that would outrank everyone if not pinned.
+	p := pr(200)
+	files := []ghc.File{
+		file("big.go", 50),    // @acme/big
+		file("zeta.go", 30),   // @acme/zeta  (tie with alpha)
+		file("alpha.go", 30),  // @acme/alpha (tie with zeta)
+		file("small.go", 10),  // @acme/small
+		file("README.md", 80), // unowned, biggest chunk of all
+	}
+	owners := ownersFrom(t,
+		"big.go @acme/big\n"+
+			"zeta.go @acme/zeta\n"+
+			"alpha.go @acme/alpha\n"+
+			"small.go @acme/small\n")
+
+	s := Compute(p, files, owners, nil, nil, "", nil)
+	got := make([]string, 0)
+	for _, o := range s.SortedOwners() {
+		got = append(got, o.Owner)
+	}
+
+	// big (50) > {alpha, zeta tie at 30, alpha first} > small (10) > unowned (80, pinned last)
+	want := []string{"@acme/big", "@acme/alpha", "@acme/zeta", "@acme/small", UnownedOwnerLabel}
+	if len(got) != len(want) {
+		t.Fatalf("SortedOwners = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("SortedOwners[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
 // TestCRUEqualsSizeTimesRisk verifies the trivial composition: CRU() is
 // just size × risk and doesn't depend on ownership.
 func TestCRUEqualsSizeTimesRisk(t *testing.T) {

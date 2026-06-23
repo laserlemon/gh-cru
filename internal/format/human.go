@@ -180,9 +180,10 @@ func writeOwnerTable(w io.Writer, s score.PRScore, isTTY, color bool, width int)
 	mySet := makeIdentitySet(s.MyIdentities)
 	myLoginKey := "@" + strings.ToLower(s.MyLogin)
 
-	// Data rows: every real CODEOWNERS owner, in first-seen order. The
-	// synthetic "unowned" owner is held back and rendered as a summary row
-	// below, so the data section is strictly the named owners.
+	// Data rows: every real CODEOWNERS owner, ranked by descending CRU
+	// (SortedOwners). The synthetic "unowned" owner is held back and
+	// rendered as a summary row below, so the data section is strictly the
+	// named owners.
 	for _, o := range s.SortedOwners() {
 		if o.Owner == score.UnownedOwnerLabel {
 			continue

@@ -3,6 +3,7 @@
 package score
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/hmarr/codeowners"
@@ -274,8 +275,9 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 			Share:    share,
 			Score:    sf * share * risk.Multiplier(),
 		}
-		// Append to owner order so the unowned row renders LAST in the
-		// table (after all real owners).
+		// Record in owner order for completeness; SortedOwners pins the
+		// unowned row LAST regardless of position, so both formatters can
+		// render it as a trailing summary row.
 		result.OwnerOrder = append(result.OwnerOrder, UnownedOwnerLabel)
 	}
 
@@ -288,11 +290,17 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 	return result
 }
 
-// SortedOwners returns ownerships in the order CODEOWNERS owners were
-// first encountered while walking the PR's changed files. This preserves
-// any deliberate priority encoded by file ordering and stays stable
-// across risk/score perturbations. Callers that want the current user
-// hoisted to the top (e.g. the Human formatter) do that themselves.
+// SortedOwners returns ownerships ranked by descending CRU (review
+// burden), so the heaviest reviewer leads the table. Ties break
+// alphabetically by owner name for a stable, deterministic order. The
+// synthetic "unowned" owner is always pinned LAST regardless of its
+// score, since both formatters render it as a trailing summary row rather
+// than a ranked data row. This single ordering authority is what keeps
+// the human table and the JSON owners[] array in lockstep.
+//
+// Since Size and Risk are constant within a PR, ranking by Score
+// (Size × Share × Risk) is the same ranking as by owned lines, just
+// scaled; "by CRU" reads as "biggest reviewer burden first."
 func (s PRScore) SortedOwners() []Ownership {
 	out := make([]Ownership, 0, len(s.OwnershipMap))
 	for _, owner := range s.OwnerOrder {
@@ -300,6 +308,18 @@ func (s PRScore) SortedOwners() []Ownership {
 			out = append(out, o)
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		// Unowned sinks to the bottom no matter its score.
+		iUnowned := out[i].Owner == UnownedOwnerLabel
+		jUnowned := out[j].Owner == UnownedOwnerLabel
+		if iUnowned != jUnowned {
+			return jUnowned
+		}
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score // descending CRU
+		}
+		return out[i].Owner < out[j].Owner // alphabetical tiebreak
+	})
 	return out
 }
 
