@@ -187,6 +187,9 @@ func TestParse_PreFetchedScoringFields(t *testing.T) {
 	if pr.Additions != 50 || pr.Deletions != 10 {
 		t.Errorf("LOC fields: %+v", pr)
 	}
+	if pr.URL != "https://github.com/o/r/pull/1" {
+		t.Errorf("url: %q", pr.URL)
+	}
 	if pr.Author != "alice" {
 		t.Errorf("author: %q", pr.Author)
 	}

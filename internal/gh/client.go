@@ -76,6 +76,7 @@ func NewClient() (*Client, error) {
 // PR is the slice of a pull request we care about for scoring.
 type PR struct {
 	Number         int
+	URL            string
 	Title          string
 	Author         string
 	State          string
@@ -231,6 +232,7 @@ func (c *Client) FetchPR(ref prref.Ref) (PR, error) {
 	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d", ref.Owner, ref.Repo, ref.Number)
 	var raw struct {
 		Number         int    `json:"number"`
+		HTMLURL        string `json:"html_url"`
 		Title          string `json:"title"`
 		State          string `json:"state"`
 		Additions      int    `json:"additions"`
@@ -261,6 +263,7 @@ func (c *Client) FetchPR(ref prref.Ref) (PR, error) {
 	}
 	return PR{
 		Number:         raw.Number,
+		URL:            raw.HTMLURL,
 		Title:          raw.Title,
 		Author:         raw.User.Login,
 		State:          raw.State,

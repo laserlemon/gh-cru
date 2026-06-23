@@ -304,6 +304,7 @@ func jsonToPR(j jsonPR, number int) ghc.PR {
 		j.MergeCommit != nil
 	pr := ghc.PR{
 		Number:    number,
+		URL:       j.URL,
 		Title:     j.Title,
 		State:     strings.ToLower(j.State),
 		Additions: j.Additions,
