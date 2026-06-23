@@ -228,12 +228,6 @@ var prTopLevelFields = []string{
 	"repository", "pullRequest", "size", "risk", "baseCru", "ownership",
 }
 
-// JSONFields returns the selectable top-level keys in canonical order.
-// Exposed so the CLI can list them (e.g. in help or an error message).
-func JSONFields() []string {
-	return append([]string(nil), prTopLevelFields...)
-}
-
 // ValidateJSONFields checks a requested --json field selection against the
 // selectable top-level keys, returning a gh-style error naming the first
 // unknown field and the full available set. Called once up front so a bad
