@@ -177,19 +177,22 @@ above, piped through `jq`:
 $ gh cru --repo acme/web 1234 --json | jq
 {
   "repository": { "name": "web", "nameWithOwner": "acme/web" },
-  "number": 1234,
-  "title": "Add rate limiting to the webhook dispatcher",
-  "lines": 240,
-  "sizeLabel": "XL",
-  "sizeFactor": 3.065154,
-  "riskLabel": "low",
-  "riskMultiplier": 1.000000,
+  "pullRequest": {
+    "additions": 200,
+    "deletions": 40,
+    "number": 1234,
+    "state": "OPEN",
+    "title": "Add rate limiting to the webhook dispatcher",
+    "url": "https://github.com/acme/web/pull/1234"
+  },
+  "size": { "label": "XL", "factor": 3.065154, "lines": 240 },
+  "risk": { "label": "low", "multiplier": 1.000000 },
   "baseCru": 3.065154,
   "ownership": {
     "owners": [
-      { "name": "laserlemon",              "type": "user", "lines": 40,  "share": 0.166667, "cru": 0.510859, "isYou": true },
-      { "name": "acme/big-orca",           "type": "team", "lines": 80,  "share": 0.333333, "cru": 1.021718, "isYou": true },
-      { "name": "acme/payments-reviewers", "type": "team", "lines": 100, "share": 0.416667, "cru": 1.277147, "isYou": false }
+      { "name": "laserlemon",              "type": "user", "isYou": true,  "lines": 40,  "share": 0.166667, "cru": 0.510859 },
+      { "name": "acme/big-orca",           "type": "team", "isYou": true,  "lines": 80,  "share": 0.333333, "cru": 1.021718 },
+      { "name": "acme/payments-reviewers", "type": "team", "isYou": false, "lines": 100, "share": 0.416667, "cru": 1.277147 }
     ],
     "unowned": { "lines": 40,  "share": 0.166667, "cru": 0.510859 },
     "all":     { "lines": 260, "share": 1.083333, "cru": 3.320583 },
@@ -198,17 +201,19 @@ $ gh cru --repo acme/web 1234 --json | jq
 }
 ```
 
-Top-level fields are the heading and formula block. `repository` is gh's
-own nested object (`{name, nameWithOwner}`), matching `gh search prs`
-rather than a flattened string. `baseCru` is `sizeFactor × riskMultiplier`,
-matching the `Base` row.
+The top level holds two borrowed GitHub objects and CRU's own measurement.
+`repository` and `pullRequest` carry only fields gh itself puts on those
+entities (`repository` is `{name, nameWithOwner}`, matching `gh search prs`
+rather than a flattened string). `size`, `risk`, `baseCru`, and `ownership`
+are CRU's. `baseCru` is `size.factor × risk.multiplier`, matching the `Base` row.
 
 | Field | Meaning |
 |---|---|
-| `lines` | The PR's changed lines (additions + deletions) |
-| `sizeLabel` / `sizeFactor` | The `Size` row: bucket and its factor |
-| `riskLabel` / `riskMultiplier` | The `Risk` row: tier and its multiplier |
-| `baseCru` | `sizeFactor × riskMultiplier`, the `Base` row |
+| `repository` | gh's repo object: `name`, `nameWithOwner` |
+| `pullRequest` | gh's PR fields: `additions`, `deletions`, `number`, `state`, `title`, `url` |
+| `size` | The `Size` row: `label` (bucket), `factor`, and `lines` (additions + deletions) |
+| `risk` | The `Risk` row: `label` (tier) and `multiplier` |
+| `baseCru` | `size.factor × risk.multiplier`, the `Base` row |
 
 `ownership` mirrors the owner table. `owners[]` holds the named rows; the
 three summary rows live alongside it as objects:
@@ -228,12 +233,50 @@ shape, mirroring the `LINES`/`SHARE`/`CRU` columns. All floats are pinned
 to six decimals so downstream `==` comparisons stay stable. Pipe through
 `jq .` for pretty output.
 
+### Selecting fields
+
+A bare `--json` emits the whole document. To narrow it, attach a comma-separated
+list of top-level keys with `=`:
+
+```sh
+$ gh cru --repo acme/web 1234 --json=size,risk | jq
+{
+  "size": { "label": "XL", "factor": 3.065154, "lines": 240 },
+  "risk": { "label": "low", "multiplier": 1.000000 }
+}
+```
+
+This inverts `gh`'s convention. `gh pr view --json` requires the field list and
+errors on a bare `--json`, because its PR object runs to dozens of fields behind
+many API calls. gh-cru's object is one small, already-computed thing, so bare
+`--json` hands you all of it and the list is there for when you want less. The
+full output doubles as the menu of valid keys.
+
+The fields attach with `=` (as in `git --color=always`), not a space. A bare
+`--json` stays valid on its own, so `gh cru --json 1234` reads `1234` as the PR,
+not a field list; the `=` is what separates the two.
+
+A misspelled field is rejected with the valid set, so you keep gh's
+typo-catching:
+
+```sh
+$ gh cru --repo acme/web 1234 --json=bogus
+unknown JSON field: "bogus"
+available fields:
+  repository
+  pullRequest
+  size
+  risk
+  baseCru
+  ownership
+```
+
 ## Flags
 
 | Flag | Purpose |
 |---|---|
 | `-R, --repo OWNER/NAME` | Repo for the PR; forwarded to `gh pr` |
-| `--json` | Structured output |
+| `--json` | Structured output; `--json=field,…` selects top-level keys |
 | `--skip-ownership` | Skip CODEOWNERS entirely; end on Base CRU (size × risk), no ownership table |
 | `--anonymous` | Don't resolve your identity; omit the `Your ownership` row |
 | `--high-risk-label LABEL` | PR label(s) that mark high risk (4×); repeat or comma-separate (default: `risk:high`) |
