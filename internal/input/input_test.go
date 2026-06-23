@@ -165,10 +165,8 @@ func TestParse_PreFetchedScoringFields(t *testing.T) {
 		"state":"MERGED",
 		"additions":50,
 		"deletions":10,
-		"changedFiles":3,
 		"mergeCommit":{"oid":"abc123"},
 		"baseRefName":"main",
-		"author":{"login":"alice"},
 		"labels":[{"name":"bug"}],
 		"files":[
 			{"path":"a.go","additions":30,"deletions":5},
@@ -189,9 +187,6 @@ func TestParse_PreFetchedScoringFields(t *testing.T) {
 	}
 	if pr.URL != "https://github.com/o/r/pull/1" {
 		t.Errorf("url: %q", pr.URL)
-	}
-	if pr.Author != "alice" {
-		t.Errorf("author: %q", pr.Author)
 	}
 	if !pr.Merged || pr.State != "merged" || pr.MergeCommitSHA != "abc123" {
 		t.Errorf("merge fields: state=%q merged=%v sha=%q", pr.State, pr.Merged, pr.MergeCommitSHA)

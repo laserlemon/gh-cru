@@ -51,7 +51,6 @@ func mkScore(loc int, hasCodeowners bool, owners []score.Ownership, unowned int,
 		PR: ghc.PR{
 			Number:    42,
 			Title:     "test",
-			Author:    "tester",
 			State:     "open",
 			Additions: loc / 2,
 			Deletions: loc - loc/2,

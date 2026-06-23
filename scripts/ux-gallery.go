@@ -216,7 +216,7 @@ func (g *gallery) jsonBlock(repo string, s score.PRScore) {
 	// TTY, so format.JSON pretty-prints and colorizes natively, exactly
 	// what a user sees running `gh cru --json` in a terminal. No jq needed.
 	var buf bytes.Buffer
-	if err := format.JSON(&buf, repo, s, term.FromEnv()); err != nil {
+	if err := format.JSON(&buf, repo, s, term.FromEnv(), nil); err != nil {
 		fmt.Fprintln(g.out, g.esc("31", "  JSON render error: "+err.Error()))
 		return
 	}
@@ -230,7 +230,7 @@ func (g *gallery) jsonBlock(repo string, s score.PRScore) {
 // the object-vs-array split: one PR is an object, a batch is an array.
 func (g *gallery) jsonArrayBlock(items []format.Item) {
 	var buf bytes.Buffer
-	if err := format.JSONArray(&buf, items, term.FromEnv()); err != nil {
+	if err := format.JSONArray(&buf, items, term.FromEnv(), nil); err != nil {
 		fmt.Fprintln(g.out, g.esc("31", "  JSON render error: "+err.Error()))
 		return
 	}
@@ -404,7 +404,7 @@ func buildScore(c scenario) score.PRScore {
 	sf := float64(size)
 	rf := c.Risk.Multiplier()
 	result := score.PRScore{
-		PR:            ghc.PR{Number: c.Number, Title: c.Title, Author: "demo", State: "open"},
+		PR:            ghc.PR{Number: c.Number, Title: c.Title, State: "open"},
 		LOC:           c.LOC,
 		Size:          size,
 		Risk:          c.Risk,

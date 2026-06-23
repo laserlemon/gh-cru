@@ -11,7 +11,7 @@ import (
 	ghc "github.com/laserlemon/gh-cru/internal/gh"
 )
 
-// pr returns a test PR with deterministic LOC. Title/State/Author are
+// pr returns a test PR with deterministic LOC. Title/State are
 // rarely material to scoring; default them.
 func pr(loc int, labels ...string) ghc.PR {
 	// Split loc roughly evenly between additions and deletions so LOC()
@@ -21,7 +21,6 @@ func pr(loc int, labels ...string) ghc.PR {
 	return ghc.PR{
 		Number:    1,
 		Title:     "test",
-		Author:    "tester",
 		State:     "open",
 		Additions: add,
 		Deletions: del,

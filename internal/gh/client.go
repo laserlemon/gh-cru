@@ -78,11 +78,9 @@ type PR struct {
 	Number         int
 	URL            string
 	Title          string
-	Author         string
 	State          string
 	Additions      int
 	Deletions      int
-	Files          int
 	Labels         []string
 	HeadSHA        string
 	BaseRef        string
@@ -237,13 +235,9 @@ func (c *Client) FetchPR(ref prref.Ref) (PR, error) {
 		State          string `json:"state"`
 		Additions      int    `json:"additions"`
 		Deletions      int    `json:"deletions"`
-		Files          int    `json:"changed_files"`
 		Merged         bool   `json:"merged"`
 		MergeCommitSHA string `json:"merge_commit_sha"`
-		User           struct {
-			Login string `json:"login"`
-		} `json:"user"`
-		Labels []struct {
+		Labels         []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
 		Head struct {
@@ -265,11 +259,9 @@ func (c *Client) FetchPR(ref prref.Ref) (PR, error) {
 		Number:         raw.Number,
 		URL:            raw.HTMLURL,
 		Title:          raw.Title,
-		Author:         raw.User.Login,
 		State:          raw.State,
 		Additions:      raw.Additions,
 		Deletions:      raw.Deletions,
-		Files:          raw.Files,
 		Labels:         labels,
 		HeadSHA:        raw.Head.SHA,
 		BaseRef:        raw.Base.Ref,

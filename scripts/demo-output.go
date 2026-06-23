@@ -148,7 +148,6 @@ func buildScore(c scenario) score.PRScore {
 		PR: ghc.PR{
 			Number: c.Number,
 			Title:  c.Title,
-			Author: "demo",
 			State:  "open",
 		},
 		LOC:           c.LOC,

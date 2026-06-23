@@ -164,19 +164,15 @@ type jsonPR struct {
 	} `json:"repository"`
 
 	// Scoring fields (pre-fetched optional)
-	Title        string `json:"title"`
-	State        string `json:"state"`
-	Additions    int    `json:"additions"`
-	Deletions    int    `json:"deletions"`
-	ChangedFiles int    `json:"changedFiles"`
-	HeadSHA      string `json:"headRefOid"`
-	BaseRef      string `json:"baseRefName"`
-	MergeCommit  *struct {
+	Title       string `json:"title"`
+	State       string `json:"state"`
+	Additions   int    `json:"additions"`
+	Deletions   int    `json:"deletions"`
+	HeadSHA     string `json:"headRefOid"`
+	BaseRef     string `json:"baseRefName"`
+	MergeCommit *struct {
 		Oid string `json:"oid"`
 	} `json:"mergeCommit"`
-	Author *struct {
-		Login string `json:"login"`
-	} `json:"author"`
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
@@ -305,13 +301,9 @@ func jsonToPR(j jsonPR, number int) ghc.PR {
 		State:     strings.ToLower(j.State),
 		Additions: j.Additions,
 		Deletions: j.Deletions,
-		Files:     j.ChangedFiles,
 		HeadSHA:   j.HeadSHA,
 		BaseRef:   j.BaseRef,
 		Merged:    merged,
-	}
-	if j.Author != nil {
-		pr.Author = j.Author.Login
 	}
 	if j.MergeCommit != nil {
 		pr.MergeCommitSHA = j.MergeCommit.Oid
