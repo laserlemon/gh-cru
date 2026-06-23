@@ -97,6 +97,8 @@ func TestPRJSONFieldsCovers(t *testing.T) {
 func resetRootFlags() {
 	repoFlag = ""
 	jsonFlag = false
+	jsonRawFlag = ""
+	jsonFieldsFlag = nil
 	noOwnersFlag = false
 	anonymousFlag = false
 	highRiskLabelsFlag = []string{"risk:high"}
@@ -109,6 +111,7 @@ func TestExtractRootFlags(t *testing.T) {
 		in               []string
 		wantOut          []string
 		wantJSON         bool
+		wantFields       []string
 		wantNoOwn        bool
 		wantAnon         bool
 		wantRepo         string
@@ -127,6 +130,15 @@ func TestExtractRootFlags(t *testing.T) {
 			in:               []string{"--json", "--state", "open"},
 			wantOut:          []string{"--state", "open"},
 			wantJSON:         true,
+			wantHighLabels:   []string{"risk:high"},
+			wantMediumLabels: []string{"risk:medium"},
+		},
+		{
+			name:             "--json=fields strip and parse",
+			in:               []string{"--json=size,risk", "--state", "open"},
+			wantOut:          []string{"--state", "open"},
+			wantJSON:         true,
+			wantFields:       []string{"size", "risk"},
 			wantHighLabels:   []string{"risk:high"},
 			wantMediumLabels: []string{"risk:medium"},
 		},
@@ -239,6 +251,9 @@ func TestExtractRootFlags(t *testing.T) {
 			if jsonFlag != tc.wantJSON {
 				t.Errorf("jsonFlag = %v, want %v", jsonFlag, tc.wantJSON)
 			}
+			if !reflect.DeepEqual(jsonFieldsFlag, tc.wantFields) {
+				t.Errorf("jsonFieldsFlag = %v, want %v", jsonFieldsFlag, tc.wantFields)
+			}
 			if noOwnersFlag != tc.wantNoOwn {
 				t.Errorf("noOwnersFlag = %v, want %v", noOwnersFlag, tc.wantNoOwn)
 			}
@@ -253,6 +268,36 @@ func TestExtractRootFlags(t *testing.T) {
 			}
 			if !reflect.DeepEqual(mediumRiskLabelsFlag, tc.wantMediumLabels) {
 				t.Errorf("mediumRiskLabelsFlag = %v, want %v", mediumRiskLabelsFlag, tc.wantMediumLabels)
+			}
+		})
+	}
+}
+
+// TestSetJSON covers the optional-value parsing core: the bare-flag
+// sentinel and empty both mean "full object" (no field filter), while a
+// comma list becomes a trimmed selection.
+func TestSetJSON(t *testing.T) {
+	tests := []struct {
+		name       string
+		raw        string
+		wantFields []string
+	}{
+		{"bare sentinel = full", jsonNoOptVal, nil},
+		{"empty = full", "", nil},
+		{"single field", "size", []string{"size"}},
+		{"comma list", "size,risk", []string{"size", "risk"}},
+		{"blanks trimmed", " size , , risk ", []string{"size", "risk"}},
+		{"trailing comma", "size,", []string{"size"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resetRootFlags()
+			setJSON(tc.raw)
+			if !jsonFlag {
+				t.Error("jsonFlag should be true after setJSON")
+			}
+			if !reflect.DeepEqual(jsonFieldsFlag, tc.wantFields) {
+				t.Errorf("jsonFieldsFlag = %v, want %v", jsonFieldsFlag, tc.wantFields)
 			}
 		})
 	}
