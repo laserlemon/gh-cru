@@ -105,6 +105,37 @@ func TestComputeCodeownersNoMatch(t *testing.T) {
 	}
 }
 
+func TestComputeCodeownersEmptyOwnerMatchCountsAsUnowned(t *testing.T) {
+	p := pr(100)
+	files := []ghc.File{
+		file("owned.go", 96),
+		file("empty-owner.txt", 4),
+	}
+	owners := ownersFrom(t,
+		"*.go @acme/eng\n"+
+			"empty-owner.txt\n")
+
+	s := Compute(p, files, owners, nil, nil, "", nil)
+
+	eng, ok := s.OwnershipMap["@acme/eng"]
+	if !ok {
+		t.Fatalf("missing @acme/eng owner")
+	}
+	if eng.OwnedLOC != 96 {
+		t.Errorf("eng.OwnedLOC = %d, want 96", eng.OwnedLOC)
+	}
+	un, ok := s.OwnershipMap[UnownedOwnerLabel]
+	if !ok {
+		t.Fatalf("missing synthetic unowned owner")
+	}
+	if un.OwnedLOC != 4 {
+		t.Errorf("unowned.OwnedLOC = %d, want 4", un.OwnedLOC)
+	}
+	if !closeTo(s.Totals().Share, 1.0) {
+		t.Errorf("Totals().Share = %v, want 1.0", s.Totals().Share)
+	}
+}
+
 // TestComputeFullCoverage verifies the clean case: one owner covers
 // 100% of the PR. Total CRU == Normal CRU; no synthetic unowned row.
 func TestComputeFullCoverage(t *testing.T) {
