@@ -309,7 +309,7 @@ not a field list; the `=` is what separates the two.
 A misspelled field is rejected with the valid set, so you keep gh's
 typo-catching:
 
-```sh
+```
 $ gh cru --repo acme/web 1234 --json=bogus
 unknown JSON field: "bogus"
 available fields:
