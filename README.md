@@ -49,22 +49,22 @@ For the math, see [`laserlemon/cru`](https://github.com/laserlemon/cru).
 
 ## Example
 
-```sh
+```ansi
 $ gh cru --repo acme/web 1234
 
-Add rate limiting to the webhook dispatcher acme/web#1234
+[0;1;39mAdd rate limiting to the webhook dispatcher[0m [0;90macme/web#1234[0m
 
-Size  XL   3.065  240 lines
-Risk  low  1.000
-Base       3.065  CRU
+[0;1;90mSize[0m  [0;1;38;5;124mXL [0m  3.065  [0;90m240 lines[0m
+[0;1;90mRisk[0m  [0;1;38;5;30mlow[0m  1.000
+[0;1;90mBase[0m       3.065  [0;90mCRU[0m
 
-   CODE OWNER               LINES   SHARE    CRU
+[0;4;90m [0m  [0;4;90mCODE OWNER             [0m  [0;4;90mLINES[0m  [0;4;90m SHARE[0m  [0;4;90m  CRU[0m
 •  acme/payments-reviewers    100   41.7%  1.277
 *  acme/big-orca               80   33.3%  1.022
 =  laserlemon                  40   16.7%  0.511
-~  Unowned                     40   16.7%  0.511
-+  All ownership              260  108.3%  3.321
->  Your ownership             120   50.0%  1.533
+[0;1;90m~[0m  [0;1;90mUnowned                [0m     40   16.7%  0.511
+[0;1;90m+[0m  [0;1;90mAll ownership          [0m    260  108.3%  3.321
+[0;1;90m>[0m  [0;1;90mYour ownership         [0m    120   50.0%  1.533
 ```
 
 The heading mirrors `gh pr view`: the PR title in bold, then a gray
@@ -173,32 +173,75 @@ PR heading, the `Size`/`Risk`/`Base` formula block, and an `ownership`
 object holding the owner table. Here's the PR from the [Example](#example)
 above, piped through `jq`:
 
-```sh
+```ansi
 $ gh cru --repo acme/web 1234 --json | jq
-{
-  "repository": { "name": "web", "nameWithOwner": "acme/web" },
-  "pullRequest": {
-    "additions": 200,
-    "deletions": 40,
-    "number": 1234,
-    "state": "OPEN",
-    "title": "Add rate limiting to the webhook dispatcher",
-    "url": "https://github.com/acme/web/pull/1234"
-  },
-  "size": { "label": "XL", "factor": 3.065154, "lines": 240 },
-  "risk": { "label": "low", "multiplier": 1.000000 },
-  "baseCru": 3.065154,
-  "ownership": {
-    "owners": [
-      { "name": "acme/payments-reviewers", "type": "team", "isYou": false, "lines": 100, "share": 0.416667, "cru": 1.277147 },
-      { "name": "acme/big-orca",           "type": "team", "isYou": true,  "lines": 80,  "share": 0.333333, "cru": 1.021718 },
-      { "name": "laserlemon",              "type": "user", "isYou": true,  "lines": 40,  "share": 0.166667, "cru": 0.510859 }
-    ],
-    "unowned": { "lines": 40,  "share": 0.166667, "cru": 0.510859 },
-    "all":     { "lines": 260, "share": 1.083333, "cru": 3.320583 },
-    "you":     { "lines": 120, "share": 0.500000, "cru": 1.532577 }
-  }
-}
+[1;39m{
+  [0m[1;34m"repository"[0m[1;39m: [0m[1;39m{
+    [0m[1;34m"name"[0m[1;39m: [0m[0;32m"web"[0m[1;39m,
+    [0m[1;34m"nameWithOwner"[0m[1;39m: [0m[0;32m"acme/web"[0m[1;39m
+  [1;39m}[0m[1;39m,
+  [0m[1;34m"pullRequest"[0m[1;39m: [0m[1;39m{
+    [0m[1;34m"additions"[0m[1;39m: [0m[0;39m200[0m[1;39m,
+    [0m[1;34m"deletions"[0m[1;39m: [0m[0;39m40[0m[1;39m,
+    [0m[1;34m"number"[0m[1;39m: [0m[0;39m1234[0m[1;39m,
+    [0m[1;34m"state"[0m[1;39m: [0m[0;32m"OPEN"[0m[1;39m,
+    [0m[1;34m"title"[0m[1;39m: [0m[0;32m"Add rate limiting to the webhook dispatcher"[0m[1;39m,
+    [0m[1;34m"url"[0m[1;39m: [0m[0;32m"https://github.com/acme/web/pull/1234"[0m[1;39m
+  [1;39m}[0m[1;39m,
+  [0m[1;34m"size"[0m[1;39m: [0m[1;39m{
+    [0m[1;34m"label"[0m[1;39m: [0m[0;32m"XL"[0m[1;39m,
+    [0m[1;34m"factor"[0m[1;39m: [0m[0;39m3.065154[0m[1;39m,
+    [0m[1;34m"lines"[0m[1;39m: [0m[0;39m240[0m[1;39m
+  [1;39m}[0m[1;39m,
+  [0m[1;34m"risk"[0m[1;39m: [0m[1;39m{
+    [0m[1;34m"label"[0m[1;39m: [0m[0;32m"low"[0m[1;39m,
+    [0m[1;34m"multiplier"[0m[1;39m: [0m[0;39m1.000000[0m[1;39m
+  [1;39m}[0m[1;39m,
+  [0m[1;34m"baseCru"[0m[1;39m: [0m[0;39m3.065154[0m[1;39m,
+  [0m[1;34m"ownership"[0m[1;39m: [0m[1;39m{
+    [0m[1;34m"owners"[0m[1;39m: [0m[1;39m[
+      [1;39m{
+        [0m[1;34m"name"[0m[1;39m: [0m[0;32m"acme/payments-reviewers"[0m[1;39m,
+        [0m[1;34m"type"[0m[1;39m: [0m[0;32m"team"[0m[1;39m,
+        [0m[1;34m"isYou"[0m[1;39m: [0m[0;39mfalse[0m[1;39m,
+        [0m[1;34m"lines"[0m[1;39m: [0m[0;39m100[0m[1;39m,
+        [0m[1;34m"share"[0m[1;39m: [0m[0;39m0.416667[0m[1;39m,
+        [0m[1;34m"cru"[0m[1;39m: [0m[0;39m1.277147[0m[1;39m
+      [1;39m}[0m[1;39m,
+      [1;39m{
+        [0m[1;34m"name"[0m[1;39m: [0m[0;32m"acme/big-orca"[0m[1;39m,
+        [0m[1;34m"type"[0m[1;39m: [0m[0;32m"team"[0m[1;39m,
+        [0m[1;34m"isYou"[0m[1;39m: [0m[0;39mtrue[0m[1;39m,
+        [0m[1;34m"lines"[0m[1;39m: [0m[0;39m80[0m[1;39m,
+        [0m[1;34m"share"[0m[1;39m: [0m[0;39m0.333333[0m[1;39m,
+        [0m[1;34m"cru"[0m[1;39m: [0m[0;39m1.021718[0m[1;39m
+      [1;39m}[0m[1;39m,
+      [1;39m{
+        [0m[1;34m"name"[0m[1;39m: [0m[0;32m"laserlemon"[0m[1;39m,
+        [0m[1;34m"type"[0m[1;39m: [0m[0;32m"user"[0m[1;39m,
+        [0m[1;34m"isYou"[0m[1;39m: [0m[0;39mtrue[0m[1;39m,
+        [0m[1;34m"lines"[0m[1;39m: [0m[0;39m40[0m[1;39m,
+        [0m[1;34m"share"[0m[1;39m: [0m[0;39m0.166667[0m[1;39m,
+        [0m[1;34m"cru"[0m[1;39m: [0m[0;39m0.510859[0m[1;39m
+      [1;39m}[0m[1;39m
+    [1;39m][0m[1;39m,
+    [0m[1;34m"unowned"[0m[1;39m: [0m[1;39m{
+      [0m[1;34m"lines"[0m[1;39m: [0m[0;39m40[0m[1;39m,
+      [0m[1;34m"share"[0m[1;39m: [0m[0;39m0.166667[0m[1;39m,
+      [0m[1;34m"cru"[0m[1;39m: [0m[0;39m0.510859[0m[1;39m
+    [1;39m}[0m[1;39m,
+    [0m[1;34m"all"[0m[1;39m: [0m[1;39m{
+      [0m[1;34m"lines"[0m[1;39m: [0m[0;39m260[0m[1;39m,
+      [0m[1;34m"share"[0m[1;39m: [0m[0;39m1.083333[0m[1;39m,
+      [0m[1;34m"cru"[0m[1;39m: [0m[0;39m3.320583[0m[1;39m
+    [1;39m}[0m[1;39m,
+    [0m[1;34m"you"[0m[1;39m: [0m[1;39m{
+      [0m[1;34m"lines"[0m[1;39m: [0m[0;39m120[0m[1;39m,
+      [0m[1;34m"share"[0m[1;39m: [0m[0;39m0.500000[0m[1;39m,
+      [0m[1;34m"cru"[0m[1;39m: [0m[0;39m1.532577[0m[1;39m
+    [1;39m}[0m[1;39m
+  [1;39m}[0m[1;39m
+[1;39m}[0m
 ```
 
 The top level holds two borrowed GitHub objects and CRU's own measurement.
@@ -238,12 +281,19 @@ to six decimals so downstream `==` comparisons stay stable. Pipe through
 A bare `--json` emits the whole document. To narrow it, attach a comma-separated
 list of top-level keys with `=`:
 
-```sh
+```ansi
 $ gh cru --repo acme/web 1234 --json=size,risk | jq
-{
-  "size": { "label": "XL", "factor": 3.065154, "lines": 240 },
-  "risk": { "label": "low", "multiplier": 1.000000 }
-}
+[1;39m{
+  [0m[1;34m"size"[0m[1;39m: [0m[1;39m{
+    [0m[1;34m"label"[0m[1;39m: [0m[0;32m"XL"[0m[1;39m,
+    [0m[1;34m"factor"[0m[1;39m: [0m[0;39m3.065154[0m[1;39m,
+    [0m[1;34m"lines"[0m[1;39m: [0m[0;39m240[0m[1;39m
+  [1;39m}[0m[1;39m,
+  [0m[1;34m"risk"[0m[1;39m: [0m[1;39m{
+    [0m[1;34m"label"[0m[1;39m: [0m[0;32m"low"[0m[1;39m,
+    [0m[1;34m"multiplier"[0m[1;39m: [0m[0;39m1.000000[0m[1;39m
+  [1;39m}[0m[1;39m
+[1;39m}[0m
 ```
 
 This inverts `gh`'s convention. `gh pr view --json` requires the field list and
