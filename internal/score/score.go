@@ -217,6 +217,10 @@ func Compute(pr ghc.PR, files []ghc.File, owners codeowners.Ruleset, highRiskLab
 			result.UnownedChanges += f.Changes
 			continue
 		}
+		if len(rule.Owners) == 0 {
+			result.UnownedChanges += f.Changes
+			continue
+		}
 		matchedMe := false
 		for _, o := range rule.Owners {
 			key := o.String()
