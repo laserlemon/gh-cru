@@ -276,57 +276,12 @@ shape, mirroring the `LINES`/`SHARE`/`CRU` columns. All floats are pinned
 to six decimals so downstream `==` comparisons stay stable. Pipe through
 `jq .` for pretty output.
 
-### Selecting fields
-
-A bare `--json` emits the whole document. To narrow it, attach a comma-separated
-list of top-level keys with `=`:
-
-```ansi
-$ gh cru --repo acme/web 1234 --json=size,risk | jq
-[1;39m{
-  [0m[1;34m"size"[0m[1;39m: [0m[1;39m{
-    [0m[1;34m"label"[0m[1;39m: [0m[0;32m"XL"[0m[1;39m,
-    [0m[1;34m"factor"[0m[1;39m: [0m[0;39m3.065154[0m[1;39m,
-    [0m[1;34m"lines"[0m[1;39m: [0m[0;39m240[0m[1;39m
-  [1;39m}[0m[1;39m,
-  [0m[1;34m"risk"[0m[1;39m: [0m[1;39m{
-    [0m[1;34m"label"[0m[1;39m: [0m[0;32m"low"[0m[1;39m,
-    [0m[1;34m"multiplier"[0m[1;39m: [0m[0;39m1.000000[0m[1;39m
-  [1;39m}[0m[1;39m
-[1;39m}[0m
-```
-
-This inverts `gh`'s convention. `gh pr view --json` requires the field list and
-errors on a bare `--json`, because its PR object runs to dozens of fields behind
-many API calls. gh-cru's object is one small, already-computed thing, so bare
-`--json` hands you all of it and the list is there for when you want less. The
-full output doubles as the menu of valid keys.
-
-The fields attach with `=` (as in `git --color=always`), not a space. A bare
-`--json` stays valid on its own, so `gh cru --json 1234` reads `1234` as the PR,
-not a field list; the `=` is what separates the two.
-
-A misspelled field is rejected with the valid set, so you keep gh's
-typo-catching:
-
-```
-$ gh cru --repo acme/web 1234 --json=bogus
-unknown JSON field: "bogus"
-available fields:
-  repository
-  pullRequest
-  size
-  risk
-  baseCru
-  ownership
-```
-
 ## Flags
 
 | Flag | Purpose |
 |---|---|
 | `-R, --repo OWNER/NAME` | Repo for the PR; forwarded to `gh pr` |
-| `--json` | Structured output; `--json=field,…` selects top-level keys |
+| `--json` | Structured output (JSON) |
 | `--skip-ownership` | Skip CODEOWNERS entirely; end on Base CRU (size × risk), no ownership table |
 | `--anonymous` | Don't resolve your identity; omit the `Your ownership` row |
 | `--high-risk-label LABEL` | PR label(s) that mark high risk (4×); repeat or comma-separate (default: `risk:high`) |
