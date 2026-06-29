@@ -32,14 +32,10 @@ import (
 // available to every subcommand without duplicating definitions.
 var (
 	repoFlag string
-	// jsonFlag records whether --json was requested at all; jsonFieldsFlag
-	// holds the optional top-level field selection. Bare --json => full
-	// object (jsonFlag true, jsonFieldsFlag nil); --json=size,risk =>
-	// subset (jsonFlag true, jsonFieldsFlag ["size","risk"]). Equals form
-	// only: an optional-value flag can't take a space-separated value
-	// without swallowing a following positional (gh cru --json 1234).
+	// jsonFlag records whether --json was requested. With --json the command
+	// emits the measurement as JSON (a bare object for one PR, an array for a
+	// batch) instead of the human table.
 	jsonFlag             bool
-	jsonFieldsFlag       []string
 	noOwnersFlag         bool
 	anonymousFlag        bool
 	highRiskLabelsFlag   []string // any matching label triggers high risk (4×); default ["risk:high"]
@@ -47,44 +43,6 @@ var (
 	webFlag              bool     // gh pr view --web; rejected by gh cru (hidden, handled in runView)
 	commentsFlag         bool     // gh pr view --comments; rejected by gh cru (hidden, handled in runView)
 )
-
-// jsonNoOptVal is the value pflag assigns to --json when it's given with
-// no =value (bare --json). It's also accepted explicitly as --json=full,
-// a readable alias for "the whole document" that reads naturally in the
-// help line (--json[=full]). setJSON maps it to "full object, no filter."
-const jsonNoOptVal = "full"
-
-// jsonFlagValue is the pflag.Value backing --json. A custom type (rather
-// than StringVar) is what keeps the help line clean: an empty Type() drops
-// the "string" varname token, so the flag renders as --json[=full] instead
-// of --json string[="<sentinel>"]. Set funnels straight into setJSON, so
-// the root pflag path and the subcommand hand-parser share one parser.
-type jsonFlagValue struct{}
-
-func (jsonFlagValue) String() string { return "" }
-func (jsonFlagValue) Type() string   { return "" }
-func (jsonFlagValue) Set(raw string) error {
-	setJSON(raw)
-	return nil
-}
-
-// setJSON records a --json request and parses its optional value. raw is
-// the value as seen by either parser: jsonNoOptVal / "full" (bare --json
-// => full), "" (also full, e.g. the subcommand bare-flag path), or a comma
-// list ("size,risk" => subset). Comma-splitting trims blanks so "size,"
-// and "size,,risk" behave. Idempotent and additive: called from the root
-// pflag path (via jsonFlagValue.Set) and the subcommand hand-parser alike.
-func setJSON(raw string) {
-	jsonFlag = true
-	if raw == "" || raw == jsonNoOptVal {
-		return // full object
-	}
-	for _, f := range strings.Split(raw, ",") {
-		if f = strings.TrimSpace(f); f != "" {
-			jsonFieldsFlag = append(jsonFieldsFlag, f)
-		}
-	}
-}
 
 func main() {
 	root := newRootCmd()
@@ -123,13 +81,8 @@ Run "gh cru view --help" for the PR argument forms gh cru view accepts.`,
 	}
 	root.PersistentFlags().StringVarP(&repoFlag, "repo", "R", "",
 		"Default repo for the PR (owner/name)")
-	root.PersistentFlags().Var(jsonFlagValue{}, "json",
-		"Emit the measurement as JSON; --json=<fields> selects top-level keys")
-	// Optional value: bare --json carries jsonNoOptVal (full object),
-	// --json=size,risk carries the selection. NoOptDefVal is what makes
-	// the value optional under pflag, and it's what renders in the help
-	// line as --json[=full].
-	root.PersistentFlags().Lookup("json").NoOptDefVal = jsonNoOptVal
+	root.PersistentFlags().BoolVar(&jsonFlag, "json", false,
+		"Emit the measurement as JSON")
 	root.PersistentFlags().BoolVar(&noOwnersFlag, "skip-ownership", false,
 		"Skip CODEOWNERS entirely; end on Base CRU (size×risk), no ownership table")
 	root.PersistentFlags().BoolVar(&anonymousFlag, "anonymous", false,
@@ -198,9 +151,8 @@ func newListCmd() *cobra.Command {
 in the order gh returned them.
 
 All flags after "list" are forwarded to "gh pr list" unchanged, with one
-exception: --json is overridden (we need a specific field set). If you pass
---json explicitly, your value is silently replaced with the fields gh-cru
-requires to measure without extra API calls.
+exception: any --json you pass to gh pr list is dropped in favor of the
+field set gh-cru requires to measure without extra API calls.
 
 The CRU rendering flags (--json on gh-cru itself, --skip-ownership, etc.)
 must appear BEFORE the "list" word so cobra picks them up:
@@ -407,13 +359,6 @@ func stripViewFlags(args []string) ([]string, error) {
 // buffering). Per-PR fetch/score failures are reported to stderr and
 // skipped; the batch still finishes and exits non-zero.
 func scoreJSON(jsonOut []byte, asArray bool) error {
-	// Validate any --json field selection once, up front, so a bad field
-	// name fails before we emit anything (and before per-PR work).
-	if jsonFlag {
-		if err := format.ValidateJSONFields(jsonFieldsFlag); err != nil {
-			return err
-		}
-	}
 	trimmed := strings.TrimSpace(string(jsonOut))
 	if trimmed == "" || trimmed == "[]" {
 		// Empty result (e.g. gh pr list matched nothing). In list JSON
@@ -421,7 +366,7 @@ func scoreJSON(jsonOut []byte, asArray bool) error {
 		// (matching `gh pr list --json` on no matches); object and human
 		// modes stay silent.
 		if jsonFlag && asArray {
-			return format.JSONArray(os.Stdout, nil, term.FromEnv(), jsonFieldsFlag)
+			return format.JSONArray(os.Stdout, nil, term.FromEnv())
 		}
 		return nil
 	}
@@ -433,7 +378,7 @@ func scoreJSON(jsonOut []byte, asArray bool) error {
 	}
 	if len(inputs) == 0 {
 		if jsonFlag && asArray {
-			return format.JSONArray(os.Stdout, nil, term.FromEnv(), jsonFieldsFlag)
+			return format.JSONArray(os.Stdout, nil, term.FromEnv())
 		}
 		return nil
 	}
@@ -460,7 +405,7 @@ func scoreJSON(jsonOut []byte, asArray bool) error {
 			items = append(items, format.Item{Repo: repoStr, Score: s})
 		case jsonFlag:
 			// Bare object per PR (NDJSON when piped over multiple).
-			if err := format.JSON(os.Stdout, repoStr, s, term.FromEnv(), jsonFieldsFlag); err != nil {
+			if err := format.JSON(os.Stdout, repoStr, s, term.FromEnv()); err != nil {
 				return err
 			}
 		default:
@@ -475,7 +420,7 @@ func scoreJSON(jsonOut []byte, asArray bool) error {
 		}
 	}
 	if jsonFlag && asArray {
-		if err := format.JSONArray(os.Stdout, items, term.FromEnv(), jsonFieldsFlag); err != nil {
+		if err := format.JSONArray(os.Stdout, items, term.FromEnv()); err != nil {
 			return err
 		}
 	}
@@ -564,18 +509,13 @@ func extractRootFlags(args []string) []string {
 		// Booleans (gh-cru-only, no value, strip).
 		switch a {
 		case "--json":
-			setJSON("")
+			jsonFlag = true
 			continue
 		case "--skip-ownership":
 			noOwnersFlag = true
 			continue
 		case "--anonymous":
 			anonymousFlag = true
-			continue
-		}
-		// --json=<fields>: gh-cru-only, strip; records the selection.
-		if strings.HasPrefix(a, "--json=") {
-			setJSON(strings.TrimPrefix(a, "--json="))
 			continue
 		}
 		// gh-cru-only string slice flags --high-risk-label / --medium-risk-label (strip).
